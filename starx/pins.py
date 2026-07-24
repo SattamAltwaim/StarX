@@ -30,9 +30,11 @@ PEFT_PIN = "peft==0.19.1"
 PIP_PINS = {
     "01": ["trimesh"],
     "02": [],
+    # trimesh appears everywhere tsr is imported: tsr/system.py and
+    # tsr/utils.py import it at module top, surgery or not.
     "03": ["pyrender", "trimesh", "omegaconf", "einops", TRANSFORMERS_PIN],
-    "04": ["omegaconf", "einops", TRANSFORMERS_PIN, PEFT_PIN],
-    "05": ["omegaconf", "einops", TRANSFORMERS_PIN, PEFT_PIN, "torchmetrics"],
+    "04": ["trimesh", "omegaconf", "einops", TRANSFORMERS_PIN, PEFT_PIN],
+    "05": ["trimesh", "omegaconf", "einops", TRANSFORMERS_PIN, PEFT_PIN, "torchmetrics"],
     "06": [
         "omegaconf",
         "einops",
