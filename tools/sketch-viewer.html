@@ -1,0 +1,400 @@
+<title>Sketch Viewer</title>
+<style>
+  :root {
+    --bg: #f4f6f8;
+    --ink: #0f1b26;
+    --faint: #8a97a3;
+    --line: #17242f;
+    --grid: #dde5ec;
+    --grid-axis: #c4d0da;
+    --accent: #185adb;
+    --accent-soft: rgba(24,90,219,0.10);
+    --construction: #c07a1e;
+    --hair: #d9e1e8;
+    --mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0a2036; --ink: #dcecfb; --faint: #557898; --line: #dcecfb;
+      --grid: rgba(130,190,255,0.12); --grid-axis: rgba(130,190,255,0.26);
+      --accent: #5bc5ff; --accent-soft: rgba(91,197,255,0.13);
+      --construction: #ffc668; --hair: rgba(130,190,255,0.16);
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #f4f6f8; --ink: #0f1b26; --faint: #8a97a3; --line: #17242f;
+    --grid: #dde5ec; --grid-axis: #c4d0da; --accent: #185adb;
+    --accent-soft: rgba(24,90,219,0.10); --construction: #c07a1e; --hair: #d9e1e8;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0a2036; --ink: #dcecfb; --faint: #557898; --line: #dcecfb;
+    --grid: rgba(130,190,255,0.12); --grid-axis: rgba(130,190,255,0.26);
+    --accent: #5bc5ff; --accent-soft: rgba(91,197,255,0.13);
+    --construction: #ffc668; --hair: rgba(130,190,255,0.16);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--sans); -webkit-font-smoothing: antialiased; }
+
+  .wrap { max-width: 1080px; margin: 0 auto; min-height: 100%;
+    padding: 30px 26px; display: flex; flex-direction: column; gap: 16px; }
+
+  .topbar { display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap; }
+  .brand { font-family: var(--mono); font-size: 12px; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--faint); white-space: nowrap; }
+  .file { font-family: var(--mono); font-size: 12px; color: var(--ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px; }
+  .grow { flex: 1 1 auto; }
+  .open { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--accent); background: none; border: 0;
+    cursor: pointer; padding: 4px 0; }
+  .open:hover { text-decoration: underline; }
+
+  .tabs { display: flex; gap: 2px; flex-wrap: wrap; }
+  .tab { font-family: var(--mono); font-size: 12px; color: var(--faint);
+    background: none; border: 0; border-bottom: 1.5px solid transparent;
+    padding: 4px 9px 6px; cursor: pointer; letter-spacing: 0.01em; }
+  .tab:hover { color: var(--ink); }
+  .tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab .pl { color: var(--faint); font-size: 10px; margin-left: 5px; opacity: 0; }
+  .tab[aria-selected="true"] .pl { opacity: 0.7; }
+  .tab:hover .pl { opacity: 0.7; }
+
+  .frame { position: relative; flex: 1 1 auto; min-height: 440px;
+    border: 1px solid var(--hair); border-radius: 3px; overflow: hidden;
+    background:
+      linear-gradient(var(--bg), var(--bg)); }
+  svg { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+  svg:active { cursor: grabbing; }
+
+  .empty { position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px; text-align: center;
+    color: var(--faint); font-family: var(--mono); font-size: 13px;
+    letter-spacing: 0.03em; padding: 24px; }
+  .empty .mark { font-size: 30px; line-height: 1; opacity: 0.7; }
+  .empty b { color: var(--ink); font-weight: 600; }
+  .empty .sub { font-size: 11px; opacity: 0.8; max-width: 300px; line-height: 1.6; }
+  .frame.drag { border-color: var(--accent); }
+  .frame.drag .empty { color: var(--accent); }
+  .frame.loaded .empty { display: none; }
+
+  .foot { display: flex; align-items: center; justify-content: space-between;
+    gap: 14px; flex-wrap: wrap; font-family: var(--mono); font-size: 11px;
+    color: var(--faint); letter-spacing: 0.02em; min-height: 18px; }
+  .flags { display: flex; gap: 14px; flex-wrap: wrap; }
+  .flag { background: none; border: 0; padding: 0; cursor: pointer;
+    font: inherit; letter-spacing: inherit; color: var(--faint);
+    display: inline-flex; align-items: center; gap: 6px; }
+  .flag::before { content: ""; width: 7px; height: 7px; border-radius: 50%;
+    border: 1px solid var(--faint); background: transparent; }
+  .flag[aria-pressed="true"] { color: var(--ink); }
+  .flag[aria-pressed="true"]::before { background: var(--accent); border-color: var(--accent); }
+  .flag.con[aria-pressed="true"]::before { background: var(--construction); border-color: var(--construction); }
+  .hint { display: flex; gap: 8px; align-items: center; }
+  .hint a { color: var(--accent); text-decoration: none; cursor: pointer; }
+  .hint a:hover { text-decoration: underline; }
+  .foot.hidden { visibility: hidden; }
+
+  .curve { stroke: var(--line); stroke-width: 1.5; fill: none;
+    stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+  .curve.construction { stroke: var(--construction); stroke-width: 1.1;
+    stroke-dasharray: 5 4; }
+  .fillpath { fill: var(--accent-soft); stroke: none; }
+  .pt { fill: var(--bg); stroke: var(--accent); stroke-width: 1.3;
+    vector-effect: non-scaling-stroke; }
+  .gridline { stroke: var(--grid); stroke-width: 1; vector-effect: non-scaling-stroke; }
+  .axis { stroke: var(--grid-axis); stroke-width: 1; vector-effect: non-scaling-stroke; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <div class="topbar">
+    <span class="brand">Sketch Viewer</span>
+    <span class="file" id="fname">no file</span>
+    <div class="grow"></div>
+    <div class="tabs" id="tabs" role="tablist"></div>
+    <button class="open" id="openBtn">Open file</button>
+    <input type="file" id="fileInput" accept=".json,application/json" hidden>
+  </div>
+
+  <div class="frame" id="frame">
+    <svg id="svg" xmlns="http://www.w3.org/2000/svg" aria-label="Sketch drawing"></svg>
+    <div class="empty" id="empty">
+      <div class="mark">⊹</div>
+      <div>Drop a <b>Fusion 360 sketch JSON</b> here</div>
+      <div class="sub">or use “Open file”. The viewer reads every sketch in the file and draws its profiles, arcs and construction lines.</div>
+    </div>
+  </div>
+
+  <div class="foot hidden" id="foot">
+    <div class="flags">
+      <button class="flag" id="f-fill" aria-pressed="true">fill</button>
+      <button class="flag con" id="f-con" aria-pressed="true">construction</button>
+      <button class="flag" id="f-pts" aria-pressed="true">points</button>
+      <button class="flag" id="f-grid" aria-pressed="true">grid</button>
+    </div>
+    <div class="hint"><span id="dims"></span><span>· scroll zoom · drag pan ·</span><a id="reset">reset</a></div>
+  </div>
+</div>
+
+<script>
+const SVGNS = "http://www.w3.org/2000/svg";
+const svg = document.getElementById("svg");
+const frame = document.getElementById("frame");
+const state = { fill: true, con: true, pts: true, grid: true };
+let sketches = [];
+let active = 0;
+let vb = null, fitVb = null;
+
+// ---------- parse Fusion 360 reconstruction JSON ----------
+// Sketch curve/profile coords are stored in each sketch's local 2D plane (z≈0),
+// so we read x,y directly — no re-projection needed.
+function parseFusion(json) {
+  const ents = json.entities || {};
+  const order = (json.timeline || []).map(t => t.entity).filter(id => ents[id]);
+  const ids = order.length ? order : Object.keys(ents);
+  const xy = p => [p.x, p.y];
+  const out = [];
+  for (const id of ids) {
+    const e = ents[id];
+    if (!e || e.type !== "Sketch") continue;
+    const P = e.points || {};
+    const curves = [];
+    for (const c of Object.values(e.curves || {})) {
+      const con = !!c.construction_geom;
+      if (c.type === "SketchLine" && P[c.start_point] && P[c.end_point])
+        curves.push({ t: "line", a: xy(P[c.start_point]), b: xy(P[c.end_point]), con });
+      else if (c.type === "SketchArc" && P[c.center_point] && P[c.start_point] && P[c.end_point])
+        curves.push({ t: "arc", c: xy(P[c.center_point]), a: xy(P[c.start_point]), b: xy(P[c.end_point]), r: c.radius, con });
+      else if (c.type === "SketchCircle" && P[c.center_point])
+        curves.push({ t: "circle", c: xy(P[c.center_point]), r: c.radius, con });
+    }
+    const profiles = [];
+    for (const pr of Object.values(e.profiles || {})) {
+      const loops = [];
+      for (const lp of (pr.loops || [])) {
+        const cs = [];
+        for (const pc of (lp.profile_curves || [])) {
+          if (pc.type === "Line3D") cs.push({ t: "line", a: xy(pc.start_point), b: xy(pc.end_point) });
+          else if (pc.type === "Arc3D") cs.push({ t: "arc", c: xy(pc.center_point), a: xy(pc.start_point), b: xy(pc.end_point), r: pc.radius });
+          else if (pc.type === "Circle3D") cs.push({ t: "circle", c: xy(pc.center_point), r: pc.radius });
+        }
+        loops.push({ outer: lp.is_outer !== false, curves: cs });
+      }
+      profiles.push({ loops });
+    }
+    const rp = e.reference_plane || {};
+    out.push({ name: e.name || ("Sketch" + (out.length + 1)),
+      plane: rp.name || rp.type || "", curves, profiles });
+  }
+  return out;
+}
+
+// ---------- geometry ----------
+function arcPoints(c, a, b, r, steps) {
+  let a0 = Math.atan2(a[1] - c[1], a[0] - c[0]);
+  let a1 = Math.atan2(b[1] - c[1], b[0] - c[0]);
+  let sweep = a1 - a0;
+  while (sweep <= 0) sweep += Math.PI * 2;
+  const n = Math.max(2, Math.ceil((sweep / (Math.PI * 2)) * (steps || 64)));
+  const out = [];
+  for (let i = 0; i <= n; i++) { const t = a0 + sweep * (i / n);
+    out.push([c[0] + r * Math.cos(t), c[1] + r * Math.sin(t)]); }
+  return out;
+}
+function curvePolyline(cv) {
+  if (cv.t === "line") return [cv.a, cv.b];
+  if (cv.t === "arc") return arcPoints(cv.c, cv.a, cv.b, cv.r);
+  if (cv.t === "circle") { const o = [];
+    for (let i = 0; i <= 72; i++) { const t = (i / 72) * Math.PI * 2;
+      o.push([cv.c[0] + cv.r * Math.cos(t), cv.c[1] + cv.r * Math.sin(t)]); } return o; }
+  return [];
+}
+function fmt(n) { return Math.round(n * 1e5) / 1e5; }
+function ptsToPath(pts, close) { let d = "";
+  pts.forEach((p, i) => { d += (i ? "L" : "M") + fmt(p[0]) + " " + fmt(-p[1]) + " "; });
+  return close ? d + "Z" : d.trim(); }
+function bounds(sk) {
+  let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+  const acc = (x, y) => { if (x < minx) minx = x; if (x > maxx) maxx = x;
+    if (y < miny) miny = y; if (y > maxy) maxy = y; };
+  sk.curves.forEach(cv => curvePolyline(cv).forEach(p => acc(p[0], -p[1])));
+  if (!isFinite(minx)) { minx = miny = -1; maxx = maxy = 1; }
+  return { minx, miny, maxx, maxy };
+}
+function mk(t) { return document.createElementNS(SVGNS, t); }
+
+// ---------- render ----------
+function render() {
+  const sk = sketches[active];
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  const gGrid = mk("g"), gFill = mk("g"), gCurves = mk("g"), gPts = mk("g");
+  svg.append(gGrid, gFill, gCurves, gPts);
+  drawGrid(gGrid);
+
+  sk.profiles.forEach(pr => {
+    let d = "";
+    pr.loops.forEach(lp => {
+      let pts = [];
+      lp.curves.forEach(cv => { const seg = curvePolyline(cv);
+        if (pts.length) seg.shift(); pts = pts.concat(seg); });
+      d += ptsToPath(pts, true) + " ";
+    });
+    const path = mk("path"); path.setAttribute("class", "fillpath");
+    path.setAttribute("fill-rule", "evenodd"); path.setAttribute("d", d.trim());
+    gFill.appendChild(path);
+  });
+
+  const endpoints = [];
+  sk.curves.forEach(cv => {
+    const path = mk("path");
+    path.setAttribute("class", "curve" + (cv.con ? " construction" : ""));
+    path.setAttribute("d", ptsToPath(curvePolyline(cv), false));
+    gCurves.appendChild(path);
+    if (cv.t === "line") endpoints.push(cv.a, cv.b);
+    else if (cv.t === "arc") endpoints.push(cv.a, cv.b);
+    else if (cv.t === "circle") endpoints.push(cv.c);
+  });
+  const seen = new Set();
+  endpoints.forEach(p => {
+    const key = fmt(p[0]) + "," + fmt(p[1]); if (seen.has(key)) return; seen.add(key);
+    const c = mk("circle"); c.setAttribute("class", "pt");
+    c.setAttribute("cx", fmt(p[0])); c.setAttribute("cy", fmt(-p[1]));
+    c.setAttribute("vector-effect", "non-scaling-stroke"); gPts.appendChild(c);
+  });
+  applyFlags();
+  updateDims();
+}
+function drawGrid(g) {
+  while (g.firstChild) g.removeChild(g.firstChild);
+  if (!vb) return;
+  const target = vb.w / 10, pow = Math.pow(10, Math.floor(Math.log10(target)));
+  const step = [1, 2, 5, 10].map(m => m * pow)
+    .reduce((a, b) => Math.abs(b - target) < Math.abs(a - target) ? b : a);
+  const x1 = vb.x + vb.w, y1 = vb.y + vb.h;
+  for (let x = Math.floor(vb.x / step) * step; x <= x1; x += step) {
+    const l = mk("line"); l.setAttribute("class", Math.abs(x) < 1e-9 ? "axis" : "gridline");
+    l.setAttribute("x1", x); l.setAttribute("x2", x);
+    l.setAttribute("y1", vb.y); l.setAttribute("y2", y1); g.appendChild(l);
+  }
+  for (let y = Math.floor(vb.y / step) * step; y <= y1; y += step) {
+    const l = mk("line"); l.setAttribute("class", Math.abs(y) < 1e-9 ? "axis" : "gridline");
+    l.setAttribute("x1", vb.x); l.setAttribute("x2", x1);
+    l.setAttribute("y1", y); l.setAttribute("y2", y); g.appendChild(l);
+  }
+}
+function setViewBox(v) {
+  vb = v; svg.setAttribute("viewBox", `${v.x} ${v.y} ${v.w} ${v.h}`);
+  const g = svg.querySelector("g"); if (g) drawGrid(g);
+  const rect = svg.getBoundingClientRect();
+  const rWorld = rect.width ? (3.5 * v.w / rect.width) : v.w * 0.005;
+  svg.querySelectorAll(".pt").forEach(c => c.setAttribute("r", rWorld));
+}
+function fitView() {
+  if (!sketches.length) return;
+  const b = bounds(sketches[active]);
+  const w = Math.max(b.maxx - b.minx, 1e-3), h = Math.max(b.maxy - b.miny, 1e-3);
+  const pad = Math.max(w, h) * 0.14 + 0.5;
+  const rect = svg.getBoundingClientRect();
+  const aspect = (rect.width || 1) / (rect.height || 1);
+  let vw = w + pad * 2, vh = h + pad * 2;
+  if (vw / vh > aspect) vh = vw / aspect; else vw = vh * aspect;
+  const cx = (b.minx + b.maxx) / 2, cy = (b.miny + b.maxy) / 2;
+  fitVb = { x: cx - vw / 2, y: cy - vh / 2, w: vw, h: vh };
+  setViewBox({ ...fitVb });
+}
+function applyFlags() {
+  if (!svg.children.length) return;
+  svg.children[1].style.display = state.fill ? "" : "none";
+  svg.children[3].style.display = state.pts ? "" : "none";
+  svg.children[0].style.display = state.grid ? "" : "none";
+  svg.querySelectorAll(".curve.construction").forEach(e =>
+    e.style.display = state.con ? "" : "none");
+}
+function updateDims() {
+  const sk = sketches[active], b = bounds(sk);
+  document.getElementById("dims").textContent =
+    `${sk.plane || "—"} · ${(b.maxx - b.minx).toFixed(2)}×${(b.maxy - b.miny).toFixed(2)}`;
+}
+
+// ---------- tabs ----------
+function buildTabs() {
+  const tabs = document.getElementById("tabs");
+  tabs.innerHTML = "";
+  sketches.forEach((sk, i) => {
+    const b = document.createElement("button");
+    b.className = "tab"; b.setAttribute("role", "tab");
+    b.setAttribute("aria-selected", i === active ? "true" : "false");
+    b.innerHTML = `${sk.name}<span class="pl">${sk.plane}</span>`;
+    b.onclick = () => { active = i;
+      [...tabs.children].forEach((c, j) => c.setAttribute("aria-selected", j === i ? "true" : "false"));
+      render(); fitView(); };
+    tabs.appendChild(b);
+  });
+}
+
+// ---------- load ----------
+function loadJSON(text, name) {
+  let json; try { json = JSON.parse(text); }
+  catch (e) { showError("Could not parse JSON."); return; }
+  const parsed = parseFusion(json);
+  if (!parsed.length) { showError("No sketches found in this file."); return; }
+  sketches = parsed; active = 0;
+  document.getElementById("fname").textContent = name || "sketch.json";
+  frame.classList.add("loaded");
+  document.getElementById("foot").classList.remove("hidden");
+  buildTabs(); render(); fitView();
+}
+function showError(msg) {
+  frame.classList.remove("loaded");
+  document.getElementById("foot").classList.add("hidden");
+  document.getElementById("empty").innerHTML =
+    `<div class="mark">⚠</div><div><b>${msg}</b></div>` +
+    `<div class="sub">Expecting a Fusion 360 reconstruction JSON with sketch entities.</div>`;
+}
+function readFile(file) {
+  if (!file) return;
+  const r = new FileReader();
+  r.onload = () => loadJSON(r.result, file.name);
+  r.readAsText(file);
+}
+
+// ---------- events ----------
+document.getElementById("openBtn").onclick = () => document.getElementById("fileInput").click();
+document.getElementById("fileInput").onchange = e => readFile(e.target.files[0]);
+["dragenter", "dragover"].forEach(ev => frame.addEventListener(ev, e => {
+  e.preventDefault(); frame.classList.add("drag"); }));
+["dragleave", "drop"].forEach(ev => frame.addEventListener(ev, e => {
+  e.preventDefault(); if (ev !== "drop" && e.relatedTarget && frame.contains(e.relatedTarget)) return;
+  frame.classList.remove("drag"); }));
+frame.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if (f) readFile(f); });
+
+Object.entries({ "f-fill": "fill", "f-con": "con", "f-pts": "pts", "f-grid": "grid" })
+  .forEach(([id, key]) => { const el = document.getElementById(id);
+    el.onclick = () => { state[key] = !state[key];
+      el.setAttribute("aria-pressed", state[key] ? "true" : "false"); applyFlags(); }; });
+
+function screenToWorld(cx, cy) { const r = svg.getBoundingClientRect();
+  return [vb.x + ((cx - r.left) / r.width) * vb.w, vb.y + ((cy - r.top) / r.height) * vb.h]; }
+svg.addEventListener("wheel", e => {
+  if (!vb) return; e.preventDefault();
+  const [wx, wy] = screenToWorld(e.clientX, e.clientY);
+  const f = Math.exp(e.deltaY * 0.0015);
+  const nw = Math.min(Math.max(vb.w * f, 0.02), 1e5), nh = nw * (vb.h / vb.w);
+  setViewBox({ x: wx - (wx - vb.x) / vb.w * nw, y: wy - (wy - vb.y) / vb.h * nh, w: nw, h: nh });
+}, { passive: false });
+let panning = false, ps = null;
+svg.addEventListener("pointerdown", e => { if (!vb) return;
+  panning = true; ps = { x: e.clientX, y: e.clientY, vb: { ...vb } }; svg.setPointerCapture(e.pointerId); });
+svg.addEventListener("pointermove", e => {
+  if (!panning) return; const r = svg.getBoundingClientRect();
+  setViewBox({ x: ps.vb.x - (e.clientX - ps.x) / r.width * ps.vb.w,
+    y: ps.vb.y - (e.clientY - ps.y) / r.height * ps.vb.h, w: vb.w, h: vb.h }); });
+svg.addEventListener("pointerup", () => panning = false);
+document.getElementById("reset").onclick = () => fitView();
+window.addEventListener("resize", () => { if (sketches.length) fitView(); });
+</script>

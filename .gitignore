@@ -1,0 +1,20 @@
+# environments and tooling
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.ipynb_checkpoints/
+.DS_Store
+.claude/
+
+# vendored clones (re-cloned at the pinned commit by the notebooks)
+third_party/
+
+# data and outputs - never committed (dataset license forbids redistribution)
+data/
+*.zip
+*.tar
+*.ckpt
+*.pt
+runs/
