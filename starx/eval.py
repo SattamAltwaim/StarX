@@ -75,6 +75,46 @@ def voxel_iou(g1: np.ndarray, g2: np.ndarray) -> float:
     return float(np.logical_and(g1, g2).sum() / union)
 
 
+def render_opacity(model, scene_code: torch.Tensor, rays_o, rays_d, ray_chunk: int = 16384):
+    """No-grad accumulated opacity per ray - the honest object mask for a
+    scene code. Color thresholds do not work: volume rendering leaves faint
+    fog across the whole scene box, so nearly every pixel is slightly
+    off-background even where there is no object."""
+    from tsr.utils import rays_intersect_bbox
+
+    device = scene_code.device
+    shape = rays_o.shape[:-1]
+    rays_o = rays_o.reshape(-1, 3).to(device)
+    rays_d = rays_d.reshape(-1, 3).to(device)
+    renderer = model.renderer
+    t_vals = torch.linspace(
+        0, 1, renderer.cfg.num_samples_per_ray + 1, device=device
+    )
+    t_mid = (t_vals[:-1] + t_vals[1:]) / 2.0
+    deltas = t_vals[1:] - t_vals[:-1]
+    chunks = []
+    with torch.no_grad():
+        for i in range(0, rays_o.shape[0], ray_chunk):
+            ro, rd = rays_o[i : i + ray_chunk], rays_d[i : i + ray_chunk]
+            t_near, t_far, valid = rays_intersect_bbox(ro, rd, renderer.cfg.radius)
+            t_near, t_far = t_near[valid], t_far[valid]
+            z_vals = t_near * (1 - t_mid[None]) + t_far * t_mid[None]
+            xyz = ro[valid][:, None, :] + z_vals[..., None] * rd[valid][:, None, :]
+            out = renderer.query_triplane(model.decoder, xyz, scene_code)
+            alpha = 1 - torch.exp(-deltas * out["density_act"][..., 0])
+            transmittance = torch.cat(
+                [
+                    torch.ones_like(alpha[:, :1]),
+                    torch.cumprod(1 - alpha[:, :-1] + 1e-10, dim=-1),
+                ],
+                dim=-1,
+            )
+            opacity = torch.zeros(ro.shape[0], device=device)
+            opacity[valid] = (alpha * transmittance).sum(-1)
+            chunks.append(opacity)
+    return torch.cat(chunks).reshape(shape)
+
+
 def query_density_grid(
     model, scene_code: torch.Tensor, res: int, chunk: int = 131072
 ) -> np.ndarray:
