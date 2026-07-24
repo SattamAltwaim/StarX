@@ -49,9 +49,22 @@ def load_pretrained_tsr(triposr_dir, device: str = "cpu"):
     import_tsr(triposr_dir)
     from tsr.system import TSR
 
-    model = TSR.from_pretrained(
-        HF_REPO, config_name="config.yaml", weight_name="model.ckpt"
-    )
+    try:
+        model = TSR.from_pretrained(
+            HF_REPO, config_name="config.yaml", weight_name="model.ckpt"
+        )
+    except RuntimeError as error:
+        if "state_dict" in str(error) and "q_proj" in str(error):
+            import transformers
+
+            raise RuntimeError(
+                f"transformers {transformers.__version__} uses the renamed ViT "
+                "module tree, which cannot load the TripoSR checkpoint. "
+                "Install the pinned version from starx.pins "
+                "(transformers==5.5.4) before building the model - the "
+                "notebook setup cells do this automatically."
+            ) from error
+        raise
     return model.to(device)
 
 

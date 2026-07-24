@@ -4,36 +4,53 @@ TRIPOSR_COMMIT is the single source of truth for the TripoSR clone; setup
 cells define the same value locally (they need it before this package is
 importable) and assert equality against this module right after import.
 
-PIP_PINS lists, per notebook, only the packages Colab does not preinstall.
-After the first successful full run these lists get frozen to the exact
-versions that session reports (Phase 2 of the build plan).
+PIP_PINS lists, per notebook, what must be installed on top of (or instead
+of) Colab's preinstalled packages.
 
-Note: TripoSR's own requirements.txt pins transformers==4.35.0; we
-deliberately rely on Colab's preinstalled transformers instead - the
-ViTModel API surface TripoSR touches is stable, and modern peft requires a
-modern transformers. rembg and torchmcubes are never installed: both are
-stubbed out by starx.model.import_tsr (background removal is unused with
-synthetic sketches, and mesh extraction uses skimage marching cubes).
+Two pins are load-bearing, verified end-to-end locally on 2026-07-24:
+- transformers==5.5.4: transformers 5.6+ renamed the ViT module tree
+  (encoder.layer.N.attention.attention.query -> layers.N.attention.q_proj),
+  which makes the TripoSR checkpoint's state dict unloadable and would break
+  every surgery path and LoRA target name in this project. 5.5.4 keeps the
+  classic naming and works with current huggingface_hub and peft.
+- peft==0.19.1: the version the surgery (inject_adapter_in_model with
+  layers_to_transform) was verified against.
+
+rembg and torchmcubes are never installed: both are stubbed out by
+starx.model.import_tsr (background removal is unused with synthetic
+sketches, and mesh extraction uses skimage marching cubes).
 """
 
 TRIPOSR_REPO = "https://github.com/VAST-AI-Research/TripoSR.git"
 TRIPOSR_COMMIT = "107cefdc244c39106fa830359024f6a2f1c78871"
 
+TRANSFORMERS_PIN = "transformers==5.5.4"
+PEFT_PIN = "peft==0.19.1"
+
 PIP_PINS = {
     "01": ["trimesh"],
     "02": [],
-    "03": ["pyrender", "trimesh", "omegaconf", "einops"],
-    "04": ["omegaconf", "einops", "peft"],
-    "05": ["omegaconf", "einops", "peft", "torchmetrics"],
+    "03": ["pyrender", "trimesh", "omegaconf", "einops", TRANSFORMERS_PIN],
+    "04": ["omegaconf", "einops", TRANSFORMERS_PIN, PEFT_PIN],
+    "05": ["omegaconf", "einops", TRANSFORMERS_PIN, PEFT_PIN, "torchmetrics"],
     "06": [
         "omegaconf",
         "einops",
-        "peft",
+        TRANSFORMERS_PIN,
+        PEFT_PIN,
         "torchmetrics",
         "trimesh",
         "pyrender",
         "scikit-image",
         "imageio",
     ],
-    "07": ["omegaconf", "einops", "peft", "trimesh", "scikit-image", "imageio"],
+    "07": [
+        "omegaconf",
+        "einops",
+        TRANSFORMERS_PIN,
+        PEFT_PIN,
+        "trimesh",
+        "scikit-image",
+        "imageio",
+    ],
 }
