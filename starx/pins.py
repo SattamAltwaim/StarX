@@ -19,6 +19,12 @@ Two pins are load-bearing, verified end-to-end locally on 2026-07-24:
 rembg and torchmcubes are never installed: both are stubbed out by
 starx.model.import_tsr (background removal is unused with synthetic
 sketches, and mesh extraction uses skimage marching cubes).
+
+PIP_UNINSTALL removes Colab-preinstalled packages that break the pinned
+stack: peft's LoRA dispatcher probes torchao and RAISES when it finds a
+version older than its minimum (Colab ships 0.10.0), even though nothing
+here uses torchao. With torchao absent, the probe correctly reports
+unavailable and injection proceeds.
 """
 
 TRIPOSR_REPO = "https://github.com/VAST-AI-Research/TripoSR.git"
@@ -26,6 +32,13 @@ TRIPOSR_COMMIT = "107cefdc244c39106fa830359024f6a2f1c78871"
 
 TRANSFORMERS_PIN = "transformers==5.5.4"
 PEFT_PIN = "peft==0.19.1"
+
+PIP_UNINSTALL = {
+    "04": ["torchao"],
+    "05": ["torchao"],
+    "06": ["torchao"],
+    "07": ["torchao"],
+}
 
 PIP_PINS = {
     "01": ["trimesh"],
