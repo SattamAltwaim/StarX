@@ -4,6 +4,16 @@ import pytest
 from starx import fusion
 
 
+def test_load_design_from_dict_uses_explicit_id(fixture_design):
+    # the json's own parent_project field lacks the component suffix, so
+    # dict loads must accept the id explicitly
+    raw = fixture_design.raw
+    inferred = fusion.load_design(raw)
+    assert inferred.design_id == "20203_7e31e92a"  # wrong for archive lookups
+    explicit = fusion.load_design(raw, design_id="20203_7e31e92a_0000")
+    assert explicit.design_id == "20203_7e31e92a_0000"
+
+
 def test_timeline_order_and_counts(fixture_design):
     d = fixture_design
     assert [s.name for s in d.sketches] == ["Sketch1", "Sketch2", "Sketch3", "Sketch4"]

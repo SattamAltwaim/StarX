@@ -9,9 +9,6 @@ one-operation-per-cell.
 from __future__ import annotations
 
 import numpy as np
-import matplotlib
-
-matplotlib.use("Agg", force=False)
 import matplotlib.pyplot as plt
 
 

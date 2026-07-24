@@ -45,15 +45,21 @@ class Design:
     raw: dict = None
 
 
-def load_design(source) -> Design:
-    """Parse a reconstruction JSON (path or already-loaded dict) into a Design."""
+def load_design(source, design_id: str = None) -> Design:
+    """Parse a reconstruction JSON (path or already-loaded dict) into a Design.
+
+    Pass design_id explicitly when loading from a dict: the json's own
+    parent_project field lacks the component suffix (e.g. `_0000`), so it is
+    not a valid key back into the dataset archive.
+    """
     if isinstance(source, (str, Path)):
-        design_id = Path(source).stem
+        inferred = Path(source).stem
         with open(source) as f:
             raw = json.load(f)
     else:
         raw = source
-        design_id = raw.get("metadata", {}).get("parent_project", "design")
+        inferred = raw.get("metadata", {}).get("parent_project", "design")
+    design_id = design_id or inferred
 
     entities = raw.get("entities", {})
     timeline = raw.get("timeline") or [
