@@ -33,6 +33,7 @@ class Sketch:
     curves: dict
     transform: dict
     reference_plane: dict
+    profiles: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -75,6 +76,7 @@ def load_design(source) -> Design:
                     curves=entity.get("curves", {}),
                     transform=entity.get("transform", {}),
                     reference_plane=entity.get("reference_plane", {}),
+                    profiles=entity.get("profiles", {}),
                 )
             )
         elif etype == "ExtrudeFeature":

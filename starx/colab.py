@@ -139,3 +139,71 @@ def extract_design(zip_path, design_id: str, dest) -> dict:
     members = [n for n in zip_inventory(zip_path) if design_id in n]
     extracted = extract_members(zip_path, members, dest)
     return {p.suffix.lstrip("."): p for p in extracted}
+
+
+def design_members(names, design_id: str) -> list:
+    """All zip member names belonging to one design."""
+    import os.path
+
+    return [n for n in names if os.path.basename(n).startswith(design_id)]
+
+
+def json_member(names, design_id: str):
+    """The design's construction-sequence json member (exact stem match)."""
+    import os.path
+
+    for name in names:
+        if os.path.basename(name) == f"{design_id}.json":
+            return name
+    return None
+
+
+def build_zip_index(names, design_ids) -> dict:
+    """One-pass member map {design_id: {json, obj, png}} for the whole zip.
+
+    obj is the design's final mesh: the plain <id>.obj when present,
+    otherwise the highest construction-step obj (which sorts last).
+    """
+    import os.path
+
+    id_set = set(design_ids)
+    index = {design_id: {} for design_id in design_ids}
+    for name in names:
+        base = os.path.basename(name)
+        stem, dot, ext = base.partition(".")
+        if not dot:
+            continue
+        design_id = stem if stem in id_set else stem.rsplit("_", 1)[0]
+        if design_id not in id_set:
+            continue
+        entry = index[design_id]
+        if ext == "json" and stem == design_id:
+            entry["json"] = name
+        elif ext == "png" and stem == design_id:
+            entry["png"] = name
+        elif ext == "obj":
+            if stem == design_id:
+                entry["obj"] = name
+                entry["obj_is_final"] = True
+            elif not entry.get("obj_is_final") and name > entry.get("obj", ""):
+                entry["obj"] = name
+    return index
+
+
+def final_obj_member(names, design_id: str):
+    """The design's final mesh: the plain <id>.obj if present, otherwise the
+    last per-construction-step obj (<id>_NNNN.obj sorts last)."""
+    import os.path
+
+    objs = sorted(
+        n
+        for n in names
+        if os.path.basename(n).startswith(design_id)
+        and n.endswith(".obj")
+    )
+    if not objs:
+        return None
+    for name in objs:
+        if os.path.basename(name) == f"{design_id}.obj":
+            return name
+    return objs[-1]
