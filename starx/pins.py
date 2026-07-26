@@ -68,4 +68,5 @@ PIP_PINS = {
         "scikit-image",
         "imageio",
     ],
+    "08": [],
 }
