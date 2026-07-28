@@ -71,6 +71,8 @@ class StarXConfig:
     lambda_mse: float = 1.0
     lambda_lpips: float = 2.0
     lambda_mask: float = 0.05
+    lambda_occ: float = 0.5  # 3D visual-hull soft-Dice term (0 disables)
+    hull_res: int = 48  # occupancy grid resolution for the 3D term
     grad_clip: float = 1.0
     ckpt_every: int = 500
     keep_k: int = 3
