@@ -38,6 +38,7 @@ PIP_UNINSTALL = {
     "05": ["torchao"],
     "06": ["torchao"],
     "07": ["torchao"],
+    "09": ["torchao"],
 }
 
 PIP_PINS = {
@@ -69,4 +70,6 @@ PIP_PINS = {
         "imageio",
     ],
     "08": [],
+    # 09 trains the stock model on synthetic edge sketches - same stack as 05
+    "09": ["trimesh", "omegaconf", "einops", TRANSFORMERS_PIN, PEFT_PIN, "torchmetrics"],
 }

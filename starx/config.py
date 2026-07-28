@@ -53,6 +53,11 @@ class StarXConfig:
     n_views: int = 16
     elev_range: tuple = (-10.0, 45.0)
 
+    # synthetic-edge variant (notebook 09: stock model, no surgery)
+    edge_blur_sigma: float = 1.2
+    edge_gain: float = 3.0
+    edge_bg: float = 1.0  # 1.0 = white page, 0.5 = TripoSR's composite gray
+
     # model surgery
     conv_init: str = "i3d_mean"  # "i3d_mean" or "rgb_zero"
     lora_r: int = 16

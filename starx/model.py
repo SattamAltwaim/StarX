@@ -202,6 +202,24 @@ def param_count_table(model) -> dict:
     return table
 
 
+def build_stock_lora_model(
+    cfg: StarXConfig, triposr_dir, device: str = "cpu", full_finetune: bool = False
+):
+    """Stock 3-channel TripoSR - NO input surgery - for the synthetic-edge
+    variant. Either the same LoRA recipe as the surgered model (default) or
+    full fine-tuning of every parameter."""
+    model = load_pretrained_tsr(triposr_dir, device="cpu")
+    if full_finetune:
+        for param in model.parameters():
+            param.requires_grad_(True)
+        info = {"lora_counts": {}, "param_table": param_count_table(model)}
+    else:
+        lora_counts = inject_lora(model, cfg)
+        table = set_trainable(model, cfg)
+        info = {"lora_counts": lora_counts, "param_table": table}
+    return model.to(device), info
+
+
 def build_starx_model(cfg: StarXConfig, triposr_dir, device: str = "cpu"):
     """Compose load + inflate + extend + inject + freeze; the single
     architecture source that notebooks 05/06/07 load checkpoints against."""

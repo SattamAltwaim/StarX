@@ -28,6 +28,7 @@ disconnect picks up where it stopped.
 | 06 | `06_evaluation` | Chamfer / F-score / IoU + image metrics on the test split, galleries, turntables, and a pretrained-on-thumbnail baseline | GPU, ~1 h |
 | 07 | `07_playground` | Upload your own drawings, get a mesh | GPU, minutes |
 | 08 | `08_transfer_to_ibex` | Runs on Ibex: pull the processed data from Google Drive with rclone (Ibex is not reachable from Colab) | Ibex, minutes |
+| 09 | `09_synthetic_sketches` | The control variant: convolutional edge detection turns notebook 03's posed renders into synthetic line drawings, and stock 3-channel TripoSR is fine-tuned on them with no surgery | GPU, ~6 h on L4 |
 
 Every notebook has a `SMOKE` switch in its configuration cell. Setting it in 03, 05,
 and 06 runs a 20-design end-to-end rehearsal (separate `smoke_*` folders on Drive) -

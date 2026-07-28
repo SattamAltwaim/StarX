@@ -172,10 +172,18 @@ def train_step(
     grad_scale: float = 1.0,
     rank: int = 0,
     world_size: int = 1,
+    input_fn=None,
 ):
     """One optimizer step. With world_size > 1, each rank handles an
     interleaved slice of the step's designs and gradients are summed
-    across ranks before the (identical) update on every rank."""
+    across ranks before the (identical) update on every rank.
+
+    input_fn is the variant hook: given (item, step) it returns the model
+    input tensor and the camera matrices to supervise against. The default
+    is the baseline - the design's own sketch stack and its stored cameras.
+    Notebook 09 passes starx.synth.make_input_fn instead, which feeds an
+    edge sketch of one posed view and cameras rotated into that view's
+    frame; nothing else about the step changes."""
     model.train()
     indices = data.draw_design_indices(
         step, cfg.accum_designs, len(train_dataset), cfg.seed
@@ -185,11 +193,14 @@ def train_step(
 
     for index in indices[rank::world_size]:
         item = train_dataset[index]
-        sketch = item["sketch"][None].to(device)
+        if input_fn is None:
+            model_input, c2ws = item["sketch"][None].to(device), item["c2ws"]
+        else:
+            model_input, c2ws = input_fn(item, step)
         with torch.autocast("cuda", dtype=amp_dtype, enabled=device == "cuda"):
             from starx import model as smodel
 
-            scene_code = smodel.encode_sketches(model, sketch)[0]
+            scene_code = smodel.encode_sketches(model, model_input)[0]
         scene_code = scene_code.float()
         code_leaf = scene_code.detach().requires_grad_(True)
 
@@ -204,7 +215,7 @@ def train_step(
             box = data.sample_crop_box(item["masks"][v], cfg.render_crop, crop_rng)
             top, left, h, w = box
             rays_o, rays_d = cameras.rays_for_crop(
-                item["c2ws"][v], FOVY_DEG, cfg.gt_size, box
+                c2ws[v], FOVY_DEG, cfg.gt_size, box
             )
             rgb_fg, opacity = render_rays(
                 model, code_leaf, rays_o.to(device), rays_d.to(device)
@@ -226,7 +237,7 @@ def train_step(
         if cfg.lambda_occ > 0:
             with torch.no_grad():
                 hull, observed = visual_hull_grid(
-                    item["masks"], item["c2ws"], cfg.hull_res, cfg.gt_size, device
+                    item["masks"], c2ws, cfg.hull_res, cfg.gt_size, device
                 )
             alpha = query_alpha_grid(model, code_leaf, cfg.hull_res)
             occ_loss = soft_dice_loss(alpha[observed], hull[observed])
