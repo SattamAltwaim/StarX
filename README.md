@@ -30,7 +30,7 @@ disconnect picks up where it stopped.
 | 08 | `08_transfer_to_ibex` | Runs on Ibex: pull the processed data from Google Drive with rclone (Ibex is not reachable from Colab) | Ibex, minutes |
 | 09 | `09_synthetic_sketches` | The control variant: convolutional edge detection turns notebook 03's posed renders into synthetic line drawings, and stock 3-channel TripoSR is fine-tuned on them with no surgery | GPU, ~6 h on L4 |
 | 10 | `10_build_sketch_dataset` | Materializes those drawings for every design and view into shards beside the design shards (~1.5 GiB), then opens them as the `Dataset` the paper-recipe run uses | any, ~1 h (resumable) |
-| 11 | `11_train_sketch_ibex` | Runs on Ibex: fine-tunes stock TripoSR on that dataset with TripoSR's published recipe - full fine-tuning, rendering loss only, DataLoader and epochs | Ibex GPU |
+| 11 | `11_finetune_triposr` | Runs on Ibex: fine-tunes stock TripoSR on that dataset - one sketch in, 13 supervision views, full fine-tuning with gradual unfreezing and discriminative learning rates | Ibex A100 |
 
 Every notebook has a `SMOKE` switch in its configuration cell. Setting it in 03, 05,
 and 06 runs a 20-design end-to-end rehearsal (separate `smoke_*` folders on Drive) -
