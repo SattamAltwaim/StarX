@@ -72,4 +72,7 @@ PIP_PINS = {
     "08": [],
     # 09 trains the stock model on synthetic edge sketches - same stack as 05
     "09": ["trimesh", "omegaconf", "einops", TRANSFORMERS_PIN, PEFT_PIN, "torchmetrics"],
+    # 10 only reads shards and writes PNGs - no tsr import, so nothing to pin
+    "10": [],
+    "11": ["trimesh", "omegaconf", "einops", TRANSFORMERS_PIN, PEFT_PIN, "torchmetrics"],
 }

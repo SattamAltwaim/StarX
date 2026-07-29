@@ -1,6 +1,7 @@
 import math
 
 import numpy as np
+import pytest
 import torch
 
 from starx import cameras
@@ -87,3 +88,62 @@ def test_visual_hull_contains_cube_and_carves_far_space():
     hull_frac_observed = hull_3d[observed_3d].mean()
     assert cube_frac * 0.8 <= supervised.mean()
     assert hull_frac_observed < 0.6
+
+
+def test_paper_optimizer_decays_only_matrix_parameters():
+    """The paper's AdamW leaves biases and normalization scales undecayed."""
+    import torch.nn as nn
+
+    from starx.config import StarXConfig
+
+    model = nn.Sequential(
+        nn.Linear(8, 8), nn.LayerNorm(8), nn.Conv2d(3, 4, 3),
+    )
+    cfg = StarXConfig(lr=4e-4, warmup_steps=10, weight_decay=0.05)
+    optimizer, _ = strain.build_paper_optimizer(model, cfg, total_steps=100)
+
+    decay, no_decay = optimizer.param_groups
+    assert decay["weight_decay"] == 0.05 and no_decay["weight_decay"] == 0.0
+    assert optimizer.defaults["betas"] == (0.9, 0.95)
+    # every decayed tensor is a matrix/kernel; every undecayed one is 1-D
+    assert all(p.ndim > 1 for p in decay["params"])
+    assert all(p.ndim <= 1 for p in no_decay["params"])
+    assert len(decay["params"]) == 2  # Linear.weight, Conv2d.weight
+    assert len(no_decay["params"]) == 4  # two biases + LayerNorm weight/bias
+
+
+def test_paper_optimizer_skips_frozen_parameters():
+    import torch.nn as nn
+
+    from starx.config import StarXConfig
+
+    model = nn.Sequential(nn.Linear(4, 4), nn.Linear(4, 4))
+    model[1].requires_grad_(False)
+    optimizer, _ = strain.build_paper_optimizer(
+        model, StarXConfig(warmup_steps=1), total_steps=10
+    )
+    counted = sum(len(g["params"]) for g in optimizer.param_groups)
+    assert counted == 2  # only the trainable Linear's weight and bias
+
+
+def test_paper_schedule_warms_up_then_cosines_to_zero():
+    import torch.nn as nn
+
+    from starx.config import StarXConfig
+
+    model = nn.Linear(4, 4)
+    cfg = StarXConfig(lr=4e-4, warmup_steps=100)
+    optimizer, scheduler = strain.build_paper_optimizer(model, cfg, total_steps=1000)
+
+    seen = []
+    for _ in range(1000):
+        seen.append(scheduler.get_last_lr()[0])
+        optimizer.step()
+        scheduler.step()
+
+    assert seen[0] < cfg.lr / 50  # starts near zero
+    assert abs(seen[99] - cfg.lr) < 1e-9  # full rate at the end of warmup
+    assert max(seen) == pytest.approx(cfg.lr)
+    assert seen[-1] < cfg.lr / 100  # anneals to zero, not to a floor
+    warm = seen[:100]
+    assert warm == sorted(warm)  # monotone ramp

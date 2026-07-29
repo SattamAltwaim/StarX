@@ -29,6 +29,8 @@ disconnect picks up where it stopped.
 | 07 | `07_playground` | Upload your own drawings, get a mesh | GPU, minutes |
 | 08 | `08_transfer_to_ibex` | Runs on Ibex: pull the processed data from Google Drive with rclone (Ibex is not reachable from Colab) | Ibex, minutes |
 | 09 | `09_synthetic_sketches` | The control variant: convolutional edge detection turns notebook 03's posed renders into synthetic line drawings, and stock 3-channel TripoSR is fine-tuned on them with no surgery | GPU, ~6 h on L4 |
+| 10 | `10_build_sketch_dataset` | Materializes those drawings for every design and view into shards beside the design shards (~1.5 GiB), then opens them as the `Dataset` the paper-recipe run uses | any, ~1 h (resumable) |
+| 11 | `11_train_sketch_ibex` | Runs on Ibex: fine-tunes stock TripoSR on that dataset with TripoSR's published recipe - full fine-tuning, rendering loss only, DataLoader and epochs | Ibex GPU |
 
 Every notebook has a `SMOKE` switch in its configuration cell. Setting it in 03, 05,
 and 06 runs a 20-design end-to-end rehearsal (separate `smoke_*` folders on Drive) -
@@ -40,9 +42,27 @@ do that once before any full run.
 starx/         the package: parsing, rasterization, cameras, rendering,
                shard/checkpoint IO, model surgery, metrics, plot helpers
 experiments/   the notebooks (the deliverable)
+scripts/       torchrun entry points: train.py (surgered baseline),
+               train_sketch.py (paper-recipe run on the sketch dataset)
 tests/         pytest suite; runs on a CPU laptop, no dataset needed
 tools/         sketch-viewer.html, a standalone viewer for design jsons
 ```
+
+## The TripoSR recipe, and what is actually in the paper
+
+Notebook 11 and `scripts/train_sketch.py` follow TripoSR's published training
+setup. Worth knowing that the report is five pages with no appendix and states
+exactly six training numbers: AdamW, lr 4e-4, `CosineAnnealingLR`, 2,000 warmup
+steps, `lambda_LPIPS` 2.0, `lambda_mask` 0.05 - plus a BCE mask loss on rendered
+opacity and 128px foreground-biased crops taken from 512px ground truth.
+
+It is silent on batch size, total steps, supervision views per object, weight
+decay, gradient clipping, and precision. Those come from LRM (the architecture
+TripoSR builds on) or are fitted to the hardware, and the config marks which is
+which. Three things cannot match here: ground truth is 256px rather than 512px,
+the batch is a fraction of LRM's 1024 shapes, and 4e-4 is a from-scratch rate
+being applied to a converged checkpoint. The visual-hull term from the baseline
+is off in this arm, since the paper's model relies on rendering losses alone.
 
 The split of responsibilities: notebooks contain the ideas (the surgery walkthrough,
 the ray march, the training step); the package contains deterministic plumbing that

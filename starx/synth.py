@@ -36,6 +36,53 @@ def gaussian_kernel1d(sigma: float) -> torch.Tensor:
     return kernel / kernel.sum()
 
 
+def sobel_sketch_batch(
+    views_rgb_uint8: np.ndarray,
+    out_size: int = 512,
+    blur_sigma: float = 1.2,
+    gain: float = 3.0,
+    bg: float = 1.0,
+    device: str = "cpu",
+) -> torch.Tensor:
+    """Many posed renders (V, H, W, 3) uint8 -> line drawings (V, S, S) float.
+
+    The batched form of sobel_sketch. The contrast normalization takes each
+    image's own maximum, not the batch's, so this agrees with the per-view
+    function up to float32 rounding - measured at 6e-6, which survives the
+    round to uint8 for all but ~0.01% of pixels, and then only by one level.
+
+    Batching is a win on CUDA (a design's whole rig in one launch) and a LOSS
+    on CPU, where torch already threads a single large convolution - measured
+    2.4x slower there. Use sketches_for_views, which dispatches on device.
+    """
+    x = torch.from_numpy(np.ascontiguousarray(views_rgb_uint8)).to(device)
+    x = x.float().div_(255.0).permute(0, 3, 1, 2)  # (V, 3, H, W)
+    x = F.interpolate(
+        x, (out_size, out_size), mode="bilinear", align_corners=False, antialias=True
+    )
+    gray = 0.299 * x[:, 0:1] + 0.587 * x[:, 1:2] + 0.114 * x[:, 2:3]
+
+    kernel = gaussian_kernel1d(blur_sigma).to(device)
+    radius = kernel.numel() // 2
+    gray = F.conv2d(
+        F.pad(gray, (radius, radius, 0, 0), mode="replicate"),
+        kernel.reshape(1, 1, 1, -1),
+    )
+    gray = F.conv2d(
+        F.pad(gray, (0, 0, radius, radius), mode="replicate"),
+        kernel.reshape(1, 1, -1, 1),
+    )
+
+    padded = F.pad(gray, (1, 1, 1, 1), mode="replicate")
+    gx = F.conv2d(padded, SOBEL_X.to(device))
+    gy = F.conv2d(padded, SOBEL_Y.to(device))
+    magnitude = torch.sqrt(gx * gx + gy * gy + 1e-12)
+
+    peak = magnitude.amax(dim=(-2, -1), keepdim=True).clamp_min(1e-3)  # per image
+    edges = (gain * (magnitude / peak)).clamp(0.0, 1.0)
+    return (bg - edges * bg).clamp(0.0, 1.0)[:, 0]  # (V, S, S)
+
+
 def sobel_sketch(
     view_rgb_uint8: np.ndarray,
     out_size: int = 512,
@@ -87,6 +134,23 @@ def sobel_sketch(
     edges = (gain * magnitude).clamp(0.0, 1.0)
     sketch = (bg - edges * bg).clamp(0.0, 1.0)[0, 0]  # dark lines on bg
     return sketch[None].repeat(3, 1, 1)  # (3, S, S)
+
+
+def sketches_for_views(views_rgb_uint8: np.ndarray, cfg, device: str = "cpu"):
+    """All of a design's views -> (V, S, S) sketches, by the faster route for
+    this device. Config-driven, so the dataset build and the training-time
+    path cannot drift apart in their edge-detection parameters."""
+    if device != "cpu":
+        return sobel_sketch_batch(
+            views_rgb_uint8, cfg.sketch_size, cfg.edge_blur_sigma,
+            cfg.edge_gain, cfg.edge_bg, device=device,
+        )
+    return torch.stack([
+        sobel_sketch(
+            view, cfg.sketch_size, cfg.edge_blur_sigma, cfg.edge_gain, cfg.edge_bg
+        )[0]
+        for view in views_rgb_uint8
+    ])
 
 
 def rotation_z(azimuth_deg: float) -> np.ndarray:

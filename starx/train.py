@@ -88,9 +88,15 @@ def render_rays(model, scene_code, rays_o, rays_d):
 
 
 def compute_render_loss(rgb_fg, opacity, gt_rgb, gt_mask, lpips_metric, cfg: StarXConfig):
-    """2D terms on one crop: MSE + LPIPS on gray-composited images + mask BCE."""
-    gt = torch.where(gt_mask[..., None], gt_rgb, torch.full_like(gt_rgb, 0.5))
-    pred = composite_over_gray(rgb_fg, opacity)
+    """2D terms on one crop: MSE + LPIPS on composited images + mask BCE.
+
+    Both sides composite over the same flat background, cfg.composite_bg.
+    StarX's default is TripoSR's inference gray (0.5); LRM trained against
+    pure white, so set it to 1.0 for the paper-faithful arrangement.
+    """
+    bg = getattr(cfg, "composite_bg", 0.5)
+    gt = torch.where(gt_mask[..., None], gt_rgb, torch.full_like(gt_rgb, bg))
+    pred = composite_over_gray(rgb_fg, opacity, bg)
     mse = F.mse_loss(pred, gt)
     lpips_term = lpips_metric(
         pred.clamp(0, 1).permute(2, 0, 1)[None], gt.permute(2, 0, 1)[None]
@@ -272,6 +278,155 @@ def train_step(
         optimizer.step()
     else:
         totals["skipped"] = 1.0  # overflowed fp16 step - dropped, not applied
+    scheduler.step()
+    optimizer.zero_grad(set_to_none=True)
+    totals["grad_norm"] = float(grad_norm)
+    totals["lr"] = scheduler.get_last_lr()[0]
+    return totals
+
+
+def build_paper_optimizer(model, cfg: StarXConfig, total_steps: int):
+    """AdamW + warmup-into-cosine, as close to TripoSR's report as it gets.
+
+    What the report actually states: AdamW, lr 4e-4, CosineAnnealingLR,
+    2,000 warm-up steps. It is silent on weight decay and betas, so those
+    default to LRM's, which TripoSR inherits everything else from: decay
+    0.05 applied only to non-bias, non-LayerNorm parameters, betas
+    (0.9, 0.95). Cosine anneals to zero here rather than to a floor - the
+    baseline's schedule keeps 0.1x, which is a StarX choice, not the paper's.
+
+    The learning rate is the one number to think twice about: 4e-4 is a
+    from-scratch pretraining rate for ~950k objects at batch 1024. Fine-
+    tuning a converged checkpoint on a few thousand designs at that rate
+    will move it a long way from where pretraining left it.
+    """
+    decay, no_decay = [], []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        # biases and every normalization scale/shift stay undecayed
+        if param.ndim <= 1 or name.endswith(".bias"):
+            no_decay.append(param)
+        else:
+            decay.append(param)
+    optimizer = torch.optim.AdamW(
+        [
+            {"params": decay, "weight_decay": cfg.weight_decay},
+            {"params": no_decay, "weight_decay": 0.0},
+        ],
+        lr=cfg.lr,
+        betas=tuple(cfg.adam_betas),
+    )
+
+    def lr_lambda(step):
+        if step < cfg.warmup_steps:
+            return (step + 1) / cfg.warmup_steps
+        progress = (step - cfg.warmup_steps) / max(1, total_steps - cfg.warmup_steps)
+        return 0.5 * (1 + math.cos(math.pi * min(progress, 1.0)))
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    return optimizer, scheduler
+
+
+def paper_train_step(
+    batch: dict,
+    model,
+    optimizer,
+    scheduler,
+    trainable_params,
+    lpips_metric,
+    cfg: StarXConfig,
+    device: str,
+    amp_dtype,
+    rng: np.random.Generator,
+    grad_scale: float = 1.0,
+    world_size: int = 1,
+):
+    """One optimizer step over a DataLoader batch of (design, input view) pairs.
+
+    The recipe is the paper's: encode the batch's drawings, render a
+    128x128 foreground-biased crop per supervision view, and score it with
+    MSE + 2.0 LPIPS + 0.05 mask BCE. Memory discipline is unchanged from
+    the baseline - each view backpropagates only to a detached scene-code
+    leaf, then one encoder backward per design carries the accumulated
+    gradient, which is the deferred backpropagation LRM describes.
+    """
+    from starx import model as smodel
+
+    model.train()
+    inputs = batch["input"].to(device)  # (B, 3, S, S)
+    batch_size = inputs.shape[0]
+    n_terms = batch_size * batch["views"].shape[1]
+    totals = {"loss": 0.0, "mse": 0.0, "lpips": 0.0, "mask": 0.0}
+
+    with torch.autocast("cuda", dtype=amp_dtype, enabled=device == "cuda"):
+        scene_codes = smodel.encode_sketches(model, inputs)
+    scene_codes = scene_codes.float()
+
+    # one encoder backward for the whole batch: each design's render graph is
+    # freed as it goes, its scene-code gradient parked here until the end
+    code_grads = torch.zeros_like(scene_codes)
+    for b in range(batch_size):
+        code_leaf = scene_codes[b].detach().requires_grad_(True)
+        views = batch["views"][b].numpy()
+        masks = batch["masks"][b].numpy()
+        c2ws = batch["c2ws"][b].numpy()
+        for v in range(views.shape[0]):
+            box = data.sample_crop_box(masks[v], cfg.render_crop, rng)
+            top, left, h, w = box
+            rays_o, rays_d = cameras.rays_for_crop(
+                c2ws[v], FOVY_DEG, views.shape[1], box
+            )
+            rgb_fg, opacity = render_rays(
+                model, code_leaf, rays_o.to(device), rays_d.to(device)
+            )
+            gt_rgb = torch.from_numpy(
+                np.ascontiguousarray(views[v][top : top + h, left : left + w])
+            ).float().to(device) / 255.0
+            gt_mask = torch.from_numpy(
+                np.ascontiguousarray(masks[v][top : top + h, left : left + w])
+            ).to(device)
+            loss, parts = compute_render_loss(
+                rgb_fg, opacity, gt_rgb, gt_mask, lpips_metric, cfg
+            )
+            (loss / n_terms).backward()
+            totals["loss"] += float(loss) / n_terms
+            for key in ("mse", "lpips", "mask"):
+                totals[key] += parts[key] / n_terms
+        code_grads[b] = code_leaf.grad
+
+    scene_codes.backward(gradient=code_grads * grad_scale)
+
+    if world_size > 1:
+        import torch.distributed as dist
+
+        # each rank's DataLoader gave it a DIFFERENT batch, and each rank's
+        # loss is already a mean over its own - so the reduction must AVERAGE,
+        # not sum, or the effective learning rate scales with the GPU count.
+        # (starx.train.train_step sums instead, correctly: there the ranks
+        # split one step's designs and each divides by the full count.)
+        for p in trainable_params:
+            if p.grad is None:
+                p.grad = torch.zeros_like(p)
+            dist.all_reduce(p.grad, op=dist.ReduceOp.SUM)
+            p.grad.div_(world_size)
+        stats = torch.tensor(
+            [totals[k] for k in ("loss", "mse", "lpips", "mask")], device=device
+        )
+        dist.all_reduce(stats, op=dist.ReduceOp.SUM)
+        for i, k in enumerate(("loss", "mse", "lpips", "mask")):
+            totals[k] = float(stats[i]) / world_size
+
+    if grad_scale != 1.0:
+        for p in trainable_params:
+            if p.grad is not None:
+                p.grad.div_(grad_scale)
+    grad_norm = torch.nn.utils.clip_grad_norm_(trainable_params, cfg.grad_clip)
+    totals["skipped"] = 0.0
+    if torch.isfinite(grad_norm):
+        optimizer.step()
+    else:
+        totals["skipped"] = 1.0
     scheduler.step()
     optimizer.zero_grad(set_to_none=True)
     totals["grad_norm"] = float(grad_norm)

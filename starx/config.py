@@ -58,6 +58,19 @@ class StarXConfig:
     edge_gain: float = 3.0
     edge_bg: float = 1.0  # 1.0 = white page, 0.5 = TripoSR's composite gray
 
+    # TripoSR's published training recipe. Its report is 5 pages with no
+    # appendix, and states exactly six training numbers (Table 1 + Sec 2.3):
+    # AdamW, lr 4e-4, CosineAnnealingLR, warmup 2000, lambda_lpips 2.0,
+    # lambda_mask 0.05 - plus 128px foreground-biased crops out of 512px
+    # ground truth, and a BCE mask loss. Everything below is something the
+    # paper is SILENT on, filled from LRM (the architecture TripoSR builds
+    # on) or chosen for this hardware; none of it can be called "the paper's".
+    weight_decay: float = 0.05  # LRM's; on non-bias, non-LayerNorm only
+    adam_betas: tuple = (0.9, 0.95)  # LRM's; TripoSR does not say
+    supervision_views: int = 4  # the paper's V is never given a value
+    batch_designs: int = 8  # shapes per optimizer step; LRM's was 1024
+    composite_bg: float = 0.5  # TripoSR's inference gray; LRM trained on white
+
     # model surgery
     conv_init: str = "i3d_mean"  # "i3d_mean" or "rgb_zero"
     lora_r: int = 16
@@ -107,6 +120,12 @@ def stats_dir(cfg: StarXConfig) -> Path:
 def shard_dir(cfg: StarXConfig, split: str) -> Path:
     """Drive directory holding one split's tar shards."""
     return Path(cfg.drive_root) / "shards" / split
+
+
+def sketch_shard_dir(cfg: StarXConfig, split: str) -> Path:
+    """Drive directory holding one split's synthetic-sketch shards. A sibling
+    of the design shards, extracted into the same local cache."""
+    return Path(cfg.drive_root) / "sketch_shards" / split
 
 
 def run_dir(cfg: StarXConfig, run_name: str) -> Path:

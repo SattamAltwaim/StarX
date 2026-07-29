@@ -83,8 +83,8 @@ def decode_sample(members: dict) -> dict:
     }
 
 
-def shard_name(index: int) -> str:
-    return f"shard_{index:05d}.tar"
+def shard_name(index: int, prefix: str = "shard") -> str:
+    return f"{prefix}_{index:05d}.tar"
 
 
 def marker_path(tar_path: Path) -> Path:
@@ -95,10 +95,10 @@ class ShardWriter:
     """Writes one shard: assemble the tar in a temp file, move it into place
     atomically, then write the .done.json marker last."""
 
-    def __init__(self, out_dir, shard_index: int):
+    def __init__(self, out_dir, shard_index: int, prefix: str = "shard"):
         self.out_dir = Path(out_dir)
         self.out_dir.mkdir(parents=True, exist_ok=True)
-        self.final_path = self.out_dir / shard_name(shard_index)
+        self.final_path = self.out_dir / shard_name(shard_index, prefix)
         self.tmp_path = self.out_dir / (self.final_path.name + ".tmp")
         self._tar = tarfile.open(self.tmp_path, "w")
         self.design_ids: list = []
@@ -138,27 +138,32 @@ def iter_shard(tar_path):
             yield decode_sample(groups[design_id])
 
 
-def list_done_shards(shard_dir) -> list:
+def list_done_shards(shard_dir, prefix: str = "shard") -> list:
     """Shards whose done-marker exists, sorted by name."""
     shard_dir = Path(shard_dir)
     if not shard_dir.exists():
         return []
     return sorted(
-        p for p in shard_dir.glob("shard_*.tar") if marker_path(p).exists()
+        p for p in shard_dir.glob(f"{prefix}_*.tar") if marker_path(p).exists()
     )
 
 
-def prepare_local(remote_dir, local_dir, progress=None) -> list:
+def prepare_local(remote_dir, local_dir, progress=None, prefix: str = "shard") -> list:
     """Copy done shards to fast local disk and extract them once.
 
     Returns the shard names newly extracted this call; already-extracted
     shards (sentinel file present) are skipped, so re-running is cheap.
+
+    A second shard set (the synthetic sketches, prefix "sketch") extracts into
+    the SAME local cache as the design shards, adding members alongside each
+    design's own rather than duplicating the renders. The per-shard sentinel
+    is keyed by tar stem, so the two sets never mistake each other for done.
     """
     local_dir = Path(local_dir)
     cache = local_dir / "cache"
     cache.mkdir(parents=True, exist_ok=True)
     fresh = []
-    shard_paths = list_done_shards(remote_dir)
+    shard_paths = list_done_shards(remote_dir, prefix)
     iterator = progress(shard_paths) if progress is not None else shard_paths
     for remote_tar in iterator:
         sentinel = cache / f".extracted_{remote_tar.stem}"
