@@ -108,9 +108,9 @@ def compute_render_loss(rgb_fg, opacity, gt_rgb, gt_mask, lpips_metric, cfg: Sta
         + cfg.lambda_mask * mask_term
     )
     return total, {
-        "mse": float(mse),
-        "lpips": float(lpips_term),
-        "mask": float(mask_term),
+        "mse": float(mse.detach()),
+        "lpips": float(lpips_term.detach()),
+        "mask": float(mask_term.detach()),
     }
 
 
@@ -461,8 +461,17 @@ def build_optimizer(model, trainable_params, cfg: StarXConfig):
 
 
 def pick_amp(device: str):
-    """(amp_dtype, grad_scale) matched to the GPU: bf16 on Ampere+, scaled
-    fp16 elsewhere."""
-    if device == "cuda" and torch.cuda.is_bf16_supported():
-        return torch.bfloat16, 1.0
+    """(amp_dtype, grad_scale) matched to the GPU: bf16 where the hardware
+    has it, scaled fp16 everywhere else.
+
+    Ask the compute capability directly rather than torch.cuda.is_bf16_-
+    supported(), whose default is including_emulation=True: on a Turing T4
+    that answers True, because bf16 runs there - emulated, and slow. Native
+    bf16 starts at capability 8.0 (Ampere: A100, L4, and newer), which is
+    exactly the line the fp16 path was written for.
+    """
+    if device.startswith("cuda") and torch.cuda.is_available():
+        index = torch.device(device).index or 0
+        if torch.cuda.get_device_capability(index)[0] >= 8:
+            return torch.bfloat16, 1.0
     return torch.float16, 4096.0

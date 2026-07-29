@@ -147,3 +147,26 @@ def test_paper_schedule_warms_up_then_cosines_to_zero():
     assert seen[-1] < cfg.lr / 100  # anneals to zero, not to a floor
     warm = seen[:100]
     assert warm == sorted(warm)  # monotone ramp
+
+
+def test_pick_amp_falls_back_to_scaled_fp16_without_native_bf16(monkeypatch):
+    """A Turing T4 reports bf16 "supported" only through emulation, which is
+    slow - the fp16 path exists for exactly that card and must engage."""
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda index=0: (7, 5))
+    dtype, scale = strain.pick_amp("cuda")
+    assert dtype is torch.float16 and scale > 1.0
+
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda index=0: (8, 0))
+    dtype, scale = strain.pick_amp("cuda")
+    assert dtype is torch.bfloat16 and scale == 1.0
+
+
+def test_pick_amp_handles_indexed_devices(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda index=0: (8, 6))
+    assert strain.pick_amp("cuda:1")[0] is torch.bfloat16
+
+
+def test_pick_amp_on_cpu():
+    assert strain.pick_amp("cpu")[0] is torch.float16
