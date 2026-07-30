@@ -466,7 +466,7 @@ def paper_train_step(
                 rgb_fg, opacity, gt_rgb, gt_mask, lpips_metric, cfg
             )
             (loss / n_terms).backward()
-            totals["loss"] += float(loss) / n_terms
+            totals["loss"] += float(loss.detach()) / n_terms
             for key in ("mse", "lpips", "mask"):
                 totals[key] += parts[key] / n_terms
         code_grads[b] = code_leaf.grad
