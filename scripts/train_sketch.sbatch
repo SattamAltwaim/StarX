@@ -34,6 +34,9 @@ export PYTHONNOUSERSITE=1
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=8
 export TOKENIZERS_PARALLELISM=false
+# a compute node may have no route out: use the cached TripoSR checkpoint and
+# fail fast instead of hanging on a network timeout mid-allocation
+export HF_HUB_OFFLINE=1
 
 echo "=============================================================="
 echo "job        : ${SLURM_JOB_ID:-none} on $(hostname)"

@@ -109,6 +109,37 @@ def _starx(args):
     return "all modules import"
 
 
+@check("triposr weights cached")
+def _weights(args):
+    """The checkpoint comes from HuggingFace, and an Ibex compute node may
+    have no route to the internet - so it has to already be in the cache,
+    and the job runs with HF_HUB_OFFLINE=1 to make a miss fail loudly here
+    rather than hang on a network timeout inside the allocation."""
+    from starx import model as smodel
+
+    roots = [Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface"))]
+    if os.environ.get("HF_HUB_CACHE"):
+        roots.insert(0, Path(os.environ["HF_HUB_CACHE"]).parent)
+    repo = "models--" + smodel.HF_REPO.replace("/", "--")
+    for root in roots:
+        for hub in (root / "hub", root):
+            snapshots = hub / repo / "snapshots"
+            if not snapshots.is_dir():
+                continue
+            for snap in snapshots.iterdir():
+                have = {p.name for p in snap.iterdir()}
+                missing = {"model.ckpt", "config.yaml"} - have
+                if not missing:
+                    size = (snap / "model.ckpt").resolve().stat().st_size
+                    return f"{smodel.HF_REPO} cached ({size / 2**30:.1f} GiB)"
+    raise FileNotFoundError(
+        f"{smodel.HF_REPO} is not in the HuggingFace cache. Pre-download it on "
+        f"a node with internet:  python -c \"from huggingface_hub import "
+        f"hf_hub_download as d; [d('{smodel.HF_REPO}', f) for f in "
+        f"('config.yaml','model.ckpt')]\""
+    )
+
+
 @check("triposr clone")
 def _triposr(args):
     from starx import pins
