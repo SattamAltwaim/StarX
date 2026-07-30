@@ -20,6 +20,10 @@ rembg and torchmcubes are never installed: both are stubbed out by
 starx.model.import_tsr (background removal is unused with synthetic
 sketches, and mesh extraction uses skimage marching cubes).
 
+imageio IS required by every notebook that imports tsr, even ones that
+render nothing: tsr/utils.py imports it at module scope. Colab preinstalls
+it, which hid this until a bare Ibex environment hit it.
+
 PIP_UNINSTALL removes Colab-preinstalled packages that break the pinned
 stack: peft's LoRA dispatcher probes torchao and RAISES when it finds a
 version older than its minimum (Colab ships 0.10.0), even though nothing
@@ -46,9 +50,9 @@ PIP_PINS = {
     "02": [],
     # trimesh appears everywhere tsr is imported: tsr/system.py and
     # tsr/utils.py import it at module top, surgery or not.
-    "03": ["pyrender", "trimesh", "omegaconf", "einops", TRANSFORMERS_PIN],
-    "04": ["trimesh", "omegaconf", "einops", TRANSFORMERS_PIN, PEFT_PIN],
-    "05": ["trimesh", "omegaconf", "einops", TRANSFORMERS_PIN, PEFT_PIN, "torchmetrics"],
+    "03": ["pyrender", "trimesh", "omegaconf", "einops", "imageio", TRANSFORMERS_PIN],
+    "04": ["trimesh", "omegaconf", "einops", "imageio", TRANSFORMERS_PIN, PEFT_PIN],
+    "05": ["trimesh", "omegaconf", "einops", "imageio", TRANSFORMERS_PIN, PEFT_PIN, "torchmetrics"],
     "06": [
         "omegaconf",
         "einops",
@@ -71,8 +75,10 @@ PIP_PINS = {
     ],
     "08": [],
     # 09 trains the stock model on synthetic edge sketches - same stack as 05
-    "09": ["trimesh", "omegaconf", "einops", TRANSFORMERS_PIN, PEFT_PIN, "torchmetrics"],
+    "09": ["trimesh", "omegaconf", "einops", "imageio", TRANSFORMERS_PIN, PEFT_PIN,
+           "torchmetrics"],
     # 10 only reads shards and writes PNGs - no tsr import, so nothing to pin
     "10": [],
-    "11": ["trimesh", "omegaconf", "einops", TRANSFORMERS_PIN, PEFT_PIN, "torchmetrics"],
+    "11": ["trimesh", "omegaconf", "einops", "imageio", TRANSFORMERS_PIN, PEFT_PIN,
+           "torchmetrics", "pandas"],
 }

@@ -109,6 +109,24 @@ def _starx(args):
     return "all modules import"
 
 
+@check("tsr import chain")
+def _tsr_imports(args):
+    """Import TripoSR's module tree for real, the way the job does.
+
+    Hand-listing dependencies does not work here: tsr/utils.py imports
+    imageio at module scope, tsr/system.py pulls omegaconf and einops, and
+    the list drifts whenever the pinned commit moves. Importing the thing
+    itself is the only check that cannot go stale. No weights are loaded.
+    """
+    from starx import model as smodel
+
+    smodel.import_tsr(args.triposr_dir)
+    from tsr.system import TSR  # noqa: F401
+    from tsr.utils import get_spherical_cameras  # noqa: F401
+
+    return "tsr.system + tsr.utils import (rembg/torchmcubes stubbed)"
+
+
 @check("training script")
 def _script(args):
     """Import the script the job will actually run. Catches a syntax error
