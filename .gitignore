@@ -18,3 +18,7 @@ data/
 *.ckpt
 *.pt
 runs/
+
+# Slurm job output (written next to the repo on the cluster)
+slurm_logs/
+*.out

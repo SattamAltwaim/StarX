@@ -4,16 +4,16 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=200G
 #SBATCH --time=24:00:00
-#SBATCH --output=%x-%j.out
-#SBATCH --error=%x-%j.out
+#SBATCH --output=slurm_logs/%x-%j.out
+#SBATCH --error=slurm_logs/%x-%j.out
 #
 # Fine-tune TripoSR on the synthetic sketch dataset, on both A100s, detached
 # from any terminal - the job survives a closed laptop, a dropped VPN and a
 # dead SSH session, which a Jupyter tunnel does not.
 #
-#   sbatch scripts/train_sketch.sbatch
+#   mkdir -p slurm_logs && sbatch scripts/train_sketch.sbatch
 #   squeue -u $USER            # watch it queue and start
-#   tail -f starx_ft-<jobid>.out
+#   tail -f slurm_logs/starx_ft-<jobid>.out
 #   scancel <jobid>            # stop it; the next submit resumes the run
 #
 # Measured on 2x A100 (jobs 49612917 / 49613075 / 49613076), 13 supervision
