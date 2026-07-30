@@ -221,3 +221,39 @@ def test_batched_and_per_view_sketches_agree_after_quantization():
     assert torch.allclose(batched, per_view, atol=1e-4)
     as_bytes = lambda t: (t * 255).round().to(torch.uint8).int()
     assert int((as_bytes(batched) - as_bytes(per_view)).abs().max()) <= 1
+
+
+def test_missing_stored_sketch_falls_back_to_deriving(built):
+    """A sketch-shard transfer still in flight leaves some designs without
+    drawings; those must be derived, not crash the epoch."""
+    cache = built["cache"]
+    victim = sorted(p.name[: -len(".meta.json")] for p in cache.glob("*.meta.json"))[0]
+    for v in range(N_VIEWS):
+        (cache / sketchdata.sketch_member_name(victim, v)).unlink()
+
+    ds = sketchdata.SketchDataset(cache, supervision_views=1, cfg=built["cfg"])
+    have, total = ds.sketch_coverage()
+    assert (have, total) == (3, 4), (have, total)
+
+    # the design with no stored drawing still yields a usable sample
+    index = ds.designs.index((victim, N_VIEWS)) * ds.n_views
+    derived = ds[index]["input"]
+    assert derived.shape == (3, built["cfg"].sketch_size, built["cfg"].sketch_size)
+
+    # and it equals what the stored one would have been
+    sample = next(shards.iter_shard(built["src"] / "shard_00000.tar"))
+    if sample["design_id"] == victim:
+        cfg = built["cfg"]
+        live = synth.sobel_sketch(sample["views"][0], cfg.sketch_size,
+                                  cfg.edge_blur_sigma, cfg.edge_gain, cfg.edge_bg)
+        assert torch.allclose(derived, live, atol=1e-6)
+
+
+def test_missing_sketch_without_cfg_says_why(built):
+    cache = built["cache"]
+    victim = sorted(p.name[: -len(".meta.json")] for p in cache.glob("*.meta.json"))[0]
+    (cache / sketchdata.sketch_member_name(victim, 0)).unlink()
+    ds = sketchdata.SketchDataset(cache, supervision_views=1, sketches="stored")
+    index = ds.designs.index((victim, N_VIEWS)) * ds.n_views
+    with pytest.raises(FileNotFoundError, match="pass cfg"):
+        ds[index]

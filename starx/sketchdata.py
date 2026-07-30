@@ -235,8 +235,24 @@ class SketchDataset(torch.utils.data.Dataset):
         return json.loads((self.cache_dir / f"{design_id}.meta.json").read_text())
 
     def _sketch(self, design_id: str, view: int) -> torch.Tensor:
+        """The stored drawing when it is there, otherwise derived on the spot.
+
+        Per FILE, not per dataset: a sketch-shard transfer that is still in
+        flight leaves some designs with drawings and some without, and a
+        mode decided once from a single probe would then fail on every
+        design the transfer had not reached yet. Deriving costs ~35 ms and
+        matches the stored version to within a uint8 level, so a partial
+        transfer just means a partly slower epoch.
+        """
         if self.sketches == "stored":
-            return load_sketch(self.cache_dir, design_id, view)
+            path = self.cache_dir / sketch_member_name(design_id, view)
+            if path.exists():
+                return load_sketch(self.cache_dir, design_id, view)
+            if self.cfg is None:
+                raise FileNotFoundError(
+                    f"{path} is missing and no cfg was given to derive it - "
+                    f"pass cfg=... so the dataset can fall back"
+                )
         rgba = np.asarray(
             Image.open(self.cache_dir / f"{design_id}.view{view:02d}.png")
         )
@@ -244,6 +260,15 @@ class SketchDataset(torch.utils.data.Dataset):
             rgba[..., :3], self.cfg.sketch_size, self.cfg.edge_blur_sigma,
             self.cfg.edge_gain, self.cfg.edge_bg,
         )
+
+    def sketch_coverage(self) -> tuple:
+        """(designs whose view-0 drawing is on disk, total) - a transfer in
+        flight shows up here rather than as a crash mid-epoch."""
+        have = sum(
+            (self.cache_dir / sketch_member_name(d, 0)).exists()
+            for d, _ in self.designs
+        )
+        return have, len(self.designs)
 
     def __getitem__(self, index: int) -> dict:
         design_index, input_view = divmod(index, self.n_views)
