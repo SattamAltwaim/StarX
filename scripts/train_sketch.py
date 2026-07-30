@@ -156,14 +156,18 @@ def main():
     if main_rank:
         for split, local in ((f"{prefix}train", train_local), (f"{prefix}test", val_local)):
             shards.prepare_local(shard_dir(cfg, split), local)
+            # Prebuilt sketches are an optimization, not a requirement: the
+            # dataset edge-detects on load when they are absent, to within a
+            # uint8 level of the stored ones. Refusing to train here would
+            # contradict the preflight, which passes on the live path.
             sketch_dir = sketch_shard_dir(cfg, split)
-            if not shards.list_done_shards(sketch_dir, sketchdata.SKETCH_PREFIX):
-                raise SystemExit(
-                    f"no sketch shards under {sketch_dir} - run notebook 10 "
-                    f"(or starx.sketchdata.build_sketch_shards) first"
-                )
-            sketchdata.check_params(sketch_dir, cfg)
-            shards.prepare_local(sketch_dir, local, prefix=sketchdata.SKETCH_PREFIX)
+            if shards.list_done_shards(sketch_dir, sketchdata.SKETCH_PREFIX):
+                sketchdata.check_params(sketch_dir, cfg)
+                shards.prepare_local(sketch_dir, local, prefix=sketchdata.SKETCH_PREFIX)
+            else:
+                print(f"  {split}: no sketch shards at {sketch_dir} - deriving each "
+                      f"drawing on load (run notebook 08 with INCLUDE_SKETCHES to "
+                      f"transfer them and save the per-sample cost)", flush=True)
     if distributed:
         import torch.distributed as dist
 

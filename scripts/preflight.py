@@ -109,6 +109,22 @@ def _starx(args):
     return "all modules import"
 
 
+@check("training script")
+def _script(args):
+    """Import the script the job will actually run. Catches a syntax error
+    or a bad import in it - which otherwise kills the allocation twenty
+    seconds in, exactly the failure this whole file exists to prevent."""
+    import importlib.util
+
+    path = REPO_DIR / "scripts" / "train_sketch.py"
+    spec = importlib.util.spec_from_file_location("_starx_train_sketch", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if not callable(getattr(module, "main", None)):
+        raise AttributeError(f"{path.name} defines no main()")
+    return f"{path.name} imports, main() present"
+
+
 @check("triposr weights cached")
 def _weights(args):
     """The checkpoint comes from HuggingFace, and an Ibex compute node may
