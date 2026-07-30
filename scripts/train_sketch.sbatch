@@ -16,6 +16,18 @@
 #   tail -f starx_ft-<jobid>.out
 #   scancel <jobid>            # stop it; the next submit resumes the run
 #
+# Measured on 2x A100 (jobs 49612917 / 49613075 / 49613076), 13 supervision
+# views: throughput is FLAT in batch size - 0.72 / 0.80 / 0.64 designs per
+# second at 2 / 8 / 16 designs per rank - and peak VRAM barely moves (12.2 /
+# 12.3 / 12.4 GiB of 80). The two-stage backward frees each view's graph as
+# it goes, so memory is per-view and the cost is the 13 sequential crop
+# renders per design, not occupancy. Bigger batches therefore buy nothing
+# and cost proportionally more per step, so the batch is deliberately SMALL:
+# it maximizes optimizer updates per hour. The lever for real speed is
+# fewer supervision views, or batching a design's views into one render.
+#
+# At this setting: 12,000 steps x 4 designs = 48,000 design-visits, ~17 h.
+#
 # Resumable by design: it writes checkpoints into the run directory and
 # picks up from the newest one, so re-submitting after the 24 h wall clock
 # (or after a crash) continues rather than restarting. Chain it with
@@ -72,7 +84,7 @@ srun --ntasks=1 --cpus-per-task="${SLURM_CPUS_PER_TASK:-16}" \
       --data-root "$DATA_ROOT" \
       --run-name "$RUN_NAME" \
       --supervision-views 13 \
-      --batch-designs 4 \
+      --batch-designs 2 \
       --total-steps 12000 \
       --lr 1e-4 \
       --warmup-steps 500 \
