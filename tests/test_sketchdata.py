@@ -102,6 +102,33 @@ def test_stored_sketch_matches_the_on_the_fly_path(built):
     assert float((stored - live).abs().max()) <= 1.0 / 255 + 1e-6
 
 
+def test_input_view_is_supervised_first(built):
+    """The input's own view must lead the supervision list - the gallery's
+    first prediction column and the azimuth-zero camera depend on it."""
+    ds = sketchdata.SketchDataset(built["cache"], supervision_views=2)
+    for index in range(N_VIEWS):
+        item = ds[index]
+        c2w = item["c2ws"][0].numpy()
+        azimuth = np.degrees(np.arctan2(c2w[1, 3], c2w[0, 3]))
+        assert abs((azimuth + 180.0) % 360.0 - 180.0) < 1e-3
+
+
+def test_live_sketches_match_stored(built):
+    """With no sketch shards present the dataset edge-detects on load; the
+    two paths must agree to within the uint8 quantization."""
+    stored = sketchdata.SketchDataset(built["cache"], supervision_views=1,
+                                      sketches="stored")
+    live = sketchdata.SketchDataset(built["cache"], supervision_views=1,
+                                    sketches="live", cfg=built["cfg"])
+    assert float((stored[0]["input"] - live[0]["input"]).abs().max()) <= 1 / 255 + 1e-6
+
+
+def test_split_designs_is_disjoint_and_covers(built):
+    train_ids, val_ids = sketchdata.split_designs(built["cache"], val_fraction=0.5)
+    assert not set(train_ids) & set(val_ids)
+    assert len(train_ids) + len(val_ids) == 4
+
+
 def test_dataset_is_one_sample_per_design_view_pair(built):
     ds = sketchdata.SketchDataset(built["cache"], supervision_views=2)
     assert len(ds) == 4 * N_VIEWS
@@ -135,14 +162,21 @@ def test_cameras_are_canonicalized_to_the_input_view(built):
 
 
 def test_epoch_redraws_supervision_views_reproducibly(built):
+    """A new epoch redraws the non-input views; the same epoch reproduces
+    them exactly. Checked across samples, since with few views to choose
+    from any single sample may legitimately redraw the same one."""
     ds = sketchdata.SketchDataset(built["cache"], supervision_views=2)
     ds.set_epoch(0)
-    first = ds[3]["c2ws"].clone()
+    first = [ds[i]["c2ws"].clone() for i in range(len(ds))]
     ds.set_epoch(1)
-    second = ds[3]["c2ws"].clone()
+    second = [ds[i]["c2ws"].clone() for i in range(len(ds))]
     ds.set_epoch(0)
-    assert torch.equal(ds[3]["c2ws"], first)
-    assert not torch.equal(first, second)
+    again = [ds[i]["c2ws"] for i in range(len(ds))]
+
+    assert all(torch.equal(a, b) for a, b in zip(first, again))
+    assert any(not torch.equal(a, b) for a, b in zip(first, second))
+    # the input view leads every list, so it never moves between epochs
+    assert all(torch.equal(a[0], b[0]) for a, b in zip(first, second))
 
 
 def test_all_masks_option_returns_the_whole_rig(built):

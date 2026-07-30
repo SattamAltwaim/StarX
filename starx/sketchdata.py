@@ -162,26 +162,31 @@ class SketchDataset(torch.utils.data.Dataset):
         self,
         cache_dir,
         split: str = None,
-        supervision_views: int = 4,
+        supervision_views: int = 13,
         seed: int = 1337,
         return_all_masks: bool = False,
-        require_sketches: bool = True,
+        design_ids=None,
+        sketches: str = "auto",
+        cfg=None,
     ):
         self.cache_dir = Path(cache_dir)
         self.supervision_views = supervision_views
         self.seed = seed
         self.return_all_masks = return_all_masks
+        self.cfg = cfg
         self.epoch = 0
 
         self.designs, self.n_views = [], None
-        for meta_path in sorted(self.cache_dir.glob("*.meta.json")):
-            design_id = meta_path.name.replace(".meta.json", "")
-            meta = json.loads(meta_path.read_text())
+        if design_ids is not None:
+            candidates = [(str(d), None) for d in design_ids]
+        else:
+            candidates = [
+                (p.name[: -len(".meta.json")], None)
+                for p in sorted(self.cache_dir.glob("*.meta.json"))
+            ]
+        for design_id, _ in candidates:
+            meta = json.loads((self.cache_dir / f"{design_id}.meta.json").read_text())
             if split is not None and meta.get("split") != split:
-                continue
-            if require_sketches and not (
-                self.cache_dir / sketch_member_name(design_id, 0)
-            ).exists():
                 continue
             self.designs.append((design_id, int(meta["n_views"])))
             self.n_views = min(self.n_views or 10**9, int(meta["n_views"]))
@@ -195,6 +200,21 @@ class SketchDataset(torch.utils.data.Dataset):
                 "designs have differing view counts: "
                 f"{sorted({n for _, n in self.designs})}"
             )
+
+        # "auto": use the prebuilt sketch shards when they reached this
+        # machine, otherwise edge-detect each render as it loads. The two
+        # agree to within one uint8 level, so a missing transfer costs
+        # throughput and nothing else.
+        if sketches == "auto":
+            sketches = (
+                "stored"
+                if self.designs
+                and (self.cache_dir / sketch_member_name(self.designs[0][0], 0)).exists()
+                else "live"
+            )
+        if sketches == "live" and cfg is None and self.designs:
+            raise ValueError("sketches='live' needs cfg for the edge parameters")
+        self.sketches = sketches
 
     def set_epoch(self, epoch: int) -> None:
         """Re-draw supervision views for the next pass (call before each epoch)."""
@@ -214,16 +234,31 @@ class SketchDataset(torch.utils.data.Dataset):
     def _meta(self, design_id: str) -> dict:
         return json.loads((self.cache_dir / f"{design_id}.meta.json").read_text())
 
+    def _sketch(self, design_id: str, view: int) -> torch.Tensor:
+        if self.sketches == "stored":
+            return load_sketch(self.cache_dir, design_id, view)
+        rgba = np.asarray(
+            Image.open(self.cache_dir / f"{design_id}.view{view:02d}.png")
+        )
+        return synth.sobel_sketch(
+            rgba[..., :3], self.cfg.sketch_size, self.cfg.edge_blur_sigma,
+            self.cfg.edge_gain, self.cfg.edge_bg,
+        )
+
     def __getitem__(self, index: int) -> dict:
         design_index, input_view = divmod(index, self.n_views)
         design_id, n_views = self.designs[design_index]
         meta = self._meta(design_id)
 
-        rng = np.random.default_rng(
-            [self.seed, index, self.epoch]
-        )
+        # the input's OWN view is always supervised first, then the rest are
+        # drawn from the others - LRM's "input view plus side views" shape,
+        # and it keeps the validation gallery's first column meaningful
+        rng = np.random.default_rng([self.seed, index, self.epoch])
+        others = [v for v in range(n_views) if v != input_view]
         k = min(self.supervision_views, n_views)
-        view_ids = rng.choice(n_views, size=k, replace=False)
+        view_ids = [input_view] + list(
+            rng.choice(others, size=max(0, k - 1), replace=False)
+        )
 
         rgbs, masks = [], []
         for v in view_ids:
@@ -237,7 +272,7 @@ class SketchDataset(torch.utils.data.Dataset):
         )
 
         item = {
-            "input": load_sketch(self.cache_dir, design_id, input_view),
+            "input": self._sketch(design_id, input_view),       # (3, S, S)
             "views": torch.from_numpy(np.stack(rgbs)),          # (k, H, W, 3) uint8
             "masks": torch.from_numpy(np.stack(masks)),         # (k, H, W) bool
             "c2ws": torch.from_numpy(c2ws[view_ids].copy()),    # (k, 4, 4) float32
@@ -254,6 +289,21 @@ class SketchDataset(torch.utils.data.Dataset):
             item["all_masks"] = torch.from_numpy(np.stack(all_masks))
             item["all_c2ws"] = torch.from_numpy(c2ws.copy())
         return item
+
+
+def split_designs(cache_dir, val_fraction: float = 0.05, seed: int = 1337):
+    """Design-level train/val split of a cache: (train_ids, val_ids).
+
+    Splitting by DESIGN, not by sample - every view of a validation design
+    is held out, so a design cannot be in both halves under a different
+    input view.
+    """
+    ids = sorted(
+        p.name[: -len(".meta.json")] for p in Path(cache_dir).glob("*.meta.json")
+    )
+    shuffled = [str(d) for d in np.random.default_rng(seed).permutation(ids)]
+    n_val = max(1, int(val_fraction * len(shuffled))) if shuffled else 0
+    return shuffled[n_val:], shuffled[:n_val]
 
 
 def collate(batch: list) -> dict:

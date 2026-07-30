@@ -169,14 +169,16 @@ def main():
 
         dist.barrier()
 
+    train_ids, val_ids = sketchdata.split_designs(
+        train_local / "cache", val_fraction=0.05, seed=cfg.seed
+    )
+    common = dict(supervision_views=cfg.supervision_views, seed=cfg.seed, cfg=cfg)
     train_dataset = sketchdata.SketchDataset(
-        train_local / "cache", supervision_views=cfg.supervision_views, seed=cfg.seed
+        train_local / "cache", design_ids=train_ids, **common
     )
     val_dataset = sketchdata.SketchDataset(
-        val_local / "cache", supervision_views=cfg.supervision_views, seed=cfg.seed
+        train_local / "cache", design_ids=val_ids, **common
     )
-    if len(val_dataset) == 0:
-        val_dataset = train_dataset
     if len(train_dataset) == 0:
         raise SystemExit("no samples - was the sketch dataset built for this split?")
 
@@ -221,8 +223,9 @@ def main():
     model.image_tokenizer.model.gradient_checkpointing_enable()
     model.backbone.gradient_checkpointing = True
     model.renderer.set_chunk_size(0)
+    stage_name = strain.apply_unfreeze_stage(model, 0, total_steps)
+    optimizer, scheduler = strain.build_finetune_optimizer(model, cfg, total_steps)
     trainable_params = [p for p in model.parameters() if p.requires_grad]
-    optimizer, scheduler = strain.build_paper_optimizer(model, cfg, total_steps)
     if main_rank:
         totals = build_info["param_table"]["ALL"]
         print(f"  trainable {totals['trainable']:,} / {totals['total']:,}")
@@ -239,6 +242,7 @@ def main():
     if latest is not None:
         ckpt_path, start_step = latest
         state = checkpoint.load_checkpoint(ckpt_path)
+        stage_name = strain.apply_unfreeze_stage(model, start_step, total_steps)
         smodel.load_trainable_state_dict(model, state["model"])
         optimizer.load_state_dict(state["optimizer"])
         scheduler.load_state_dict(state["scheduler"])
@@ -314,6 +318,14 @@ def main():
             if step >= total_steps:
                 break
             step_started = time.time()
+            opened = strain.apply_unfreeze_stage(model, step, total_steps)
+            if opened != stage_name:
+                stage_name = opened
+                trainable_params = [p for p in model.parameters() if p.requires_grad]
+                if main_rank:
+                    live = sum(p.numel() for p in trainable_params)
+                    print(f"  step {step}: unfroze -> '{stage_name}' "
+                          f"({live:,} trainable)", flush=True)
             totals = strain.paper_train_step(
                 batch, model, optimizer, scheduler, trainable_params,
                 lpips_metric, cfg, device, amp_dtype, crop_rng, grad_scale,

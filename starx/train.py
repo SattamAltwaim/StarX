@@ -285,6 +285,82 @@ def train_step(
     return totals
 
 
+# Gradual unfreezing, outermost layers first. At step zero the decoder is
+# being asked to explain a kind of image it has never seen, so its gradients
+# are large and noisy; letting those reach DINO immediately is how a
+# pretrained encoder gets wrecked in the first few hundred steps. Fractions
+# are of the total step budget.
+UNFREEZE_STAGES = (
+    {"at": 0.00, "name": "head", "groups": ("decoder", "post_processor")},
+    {"at": 0.10, "name": "+triplane", "groups": ("tokenizer",)},
+    {"at": 0.25, "name": "+backbone", "groups": ("backbone",)},
+    {"at": 0.55, "name": "+encoder", "groups": ("image_tokenizer",)},
+)
+
+# How far each group is allowed to move: the deeper into pretraining it
+# sits, the smaller its share of the learning rate.
+LR_SCALE = {
+    "decoder": 1.0,
+    "post_processor": 1.0,
+    "tokenizer": 0.5,
+    "backbone": 0.5,
+    "image_tokenizer": 0.1,
+}
+
+
+def stage_boundaries(total_steps: int, stages=UNFREEZE_STAGES) -> list:
+    return [int(s["at"] * total_steps) for s in stages]
+
+
+def apply_unfreeze_stage(model, step: int, total_steps: int, stages=UNFREEZE_STAGES):
+    """Freeze everything, then unlock every group whose stage has arrived.
+
+    Returns the active stage name. Idempotent, so calling it every step is
+    free, and calling it before loading a checkpoint rebuilds exactly the
+    trainable set that checkpoint was written with.
+    """
+    bounds = stage_boundaries(total_steps, stages)
+    active = [s for s, b in zip(stages, bounds) if step >= b] or [stages[0]]
+    for param in model.parameters():
+        param.requires_grad_(False)
+    for stage in active:
+        for group in stage["groups"]:
+            getattr(model, group).requires_grad_(True)
+    return active[-1]["name"]
+
+
+def build_finetune_optimizer(model, cfg: StarXConfig, total_steps: int,
+                             lr_scale=None):
+    """AdamW with per-group learning rates, warmup into cosine.
+
+    Every parameter goes into the optimizer up front, including ones that
+    are frozen right now: AdamW skips a param whose grad is None, so a group
+    simply starts contributing on the step its stage opens, with its moments
+    initialized fresh at that point. Weight decay skips biases and norms.
+    """
+    lr_scale = lr_scale or LR_SCALE
+    groups = []
+    for name, scale in lr_scale.items():
+        module = getattr(model, name)
+        decay = [p for p in module.parameters() if p.ndim > 1]
+        plain = [p for p in module.parameters() if p.ndim <= 1]
+        if decay:
+            groups.append({"params": decay, "lr": cfg.lr * scale,
+                           "weight_decay": cfg.weight_decay, "name": name})
+        if plain:
+            groups.append({"params": plain, "lr": cfg.lr * scale,
+                           "weight_decay": 0.0, "name": f"{name}.nodecay"})
+    optimizer = torch.optim.AdamW(groups, lr=cfg.lr, betas=tuple(cfg.adam_betas))
+
+    def lr_lambda(step):
+        if step < cfg.warmup_steps:
+            return (step + 1) / cfg.warmup_steps
+        progress = (step - cfg.warmup_steps) / max(1, total_steps - cfg.warmup_steps)
+        return 0.5 * (1 + math.cos(math.pi * min(progress, 1.0)))
+
+    return optimizer, torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+
 def build_paper_optimizer(model, cfg: StarXConfig, total_steps: int):
     """AdamW + warmup-into-cosine, as close to TripoSR's report as it gets.
 
