@@ -101,6 +101,14 @@ def compute_render_loss(rgb_fg, opacity, gt_rgb, gt_mask, lpips_metric, cfg: Sta
     lpips_term = lpips_metric(
         pred.clamp(0, 1).permute(2, 0, 1)[None], gt.permute(2, 0, 1)[None]
     )
+    # torchmetrics' LPIPS is a Metric, not a plain loss: every call appends
+    # to its `all_scores` list state, and its forward() copies that state on
+    # each call - so cost grows LINEARLY with the number of calls ever made,
+    # making training quadratic in steps. Measured on an A100: 7.1 ms flat
+    # with this reset, 8.6 -> 12.1 ms over the first 600 calls without it.
+    # At 26 calls per step that reached ~26 s/step by step 4,000 of a real
+    # run. We want the value, never the running average, so drop the state.
+    lpips_metric.reset()
     mask_term = F.binary_cross_entropy(opacity.clamp(1e-4, 1 - 1e-4), gt_mask.float())
     total = (
         cfg.lambda_mse * mse

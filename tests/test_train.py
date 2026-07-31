@@ -170,3 +170,47 @@ def test_pick_amp_handles_indexed_devices(monkeypatch):
 
 def test_pick_amp_on_cpu():
     assert strain.pick_amp("cpu")[0] is torch.float16
+
+
+class _FakeLpips(torch.nn.Module):
+    """Stands in for torchmetrics' Metric: accumulates state, and records
+    whether anyone resets it."""
+
+    def __init__(self):
+        super().__init__()
+        self.all_scores = []
+        self.resets = 0
+
+    def forward(self, a, b):
+        value = (a - b).abs().mean()
+        self.all_scores.append(value)
+        return value
+
+    def reset(self):
+        self.all_scores.clear()
+        self.resets += 1
+
+
+def test_render_loss_does_not_let_lpips_state_grow():
+    """torchmetrics' LPIPS appends to a list on every call and its forward()
+    copies that state, so an unreset metric makes training quadratic in the
+    number of steps. compute_render_loss must leave no state behind."""
+    from starx.config import StarXConfig
+
+    cfg = StarXConfig(lambda_mse=1.0, lambda_lpips=2.0, lambda_mask=0.05)
+    metric = _FakeLpips()
+    rgb = torch.rand(8, 8, 3, requires_grad=True)
+    opacity = torch.rand(8, 8, requires_grad=True)
+    gt_rgb = torch.rand(8, 8, 3)
+    gt_mask = torch.zeros(8, 8, dtype=torch.bool)
+    gt_mask[2:6, 2:6] = True
+
+    for _ in range(50):
+        total, parts = strain.compute_render_loss(
+            rgb, opacity, gt_rgb, gt_mask, metric, cfg
+        )
+    assert metric.all_scores == [], "LPIPS state accumulated across calls"
+    assert metric.resets == 50
+    assert total.requires_grad, "resetting must not detach the returned loss"
+    total.backward()
+    assert rgb.grad is not None
