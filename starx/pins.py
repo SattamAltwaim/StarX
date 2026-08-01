@@ -43,6 +43,7 @@ PIP_UNINSTALL = {
     "06": ["torchao"],
     "07": ["torchao"],
     "09": ["torchao"],
+    "12": ["torchao"],
 }
 
 PIP_PINS = {
@@ -81,4 +82,7 @@ PIP_PINS = {
     "10": [],
     "11": ["trimesh", "omegaconf", "einops", "imageio", TRANSFORMERS_PIN, PEFT_PIN,
            "torchmetrics", "pandas"],
+    # 12 is the demo: inference, marching cubes, plotly mesh, turntable gif
+    "12": ["trimesh", "omegaconf", "einops", "imageio", TRANSFORMERS_PIN,
+           "scikit-image", "plotly"],
 }
