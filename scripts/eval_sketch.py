@@ -65,6 +65,7 @@ def evaluate(model, dataset, indices, lpips, cfg, device, novel_c2w, label):
     model.renderer.set_chunk_size(cfg.eval_chunk)
     totals = {}
     frames = []
+    per_design = []
     with torch.no_grad():
         for n, index in enumerate(indices):
             item = dataset[index]
@@ -84,6 +85,7 @@ def evaluate(model, dataset, indices, lpips, cfg, device, novel_c2w, label):
             turned = strain.composite_over_gray(
                 rgb, alpha, cfg.composite_bg
             ).clamp(0, 1).cpu().numpy()
+            per_design.append({"design_id": item["design_id"], **at_input})
             for k, v in at_input.items():
                 totals[k] = totals.get(k, 0.0) + v
             if n < 4:
@@ -91,7 +93,8 @@ def evaluate(model, dataset, indices, lpips, cfg, device, novel_c2w, label):
             if (n + 1) % 25 == 0:
                 print(f"  {label}: {n + 1}/{len(indices)}", flush=True)
     model.renderer.set_chunk_size(0)
-    return {k: v / len(indices) for k, v in totals.items()}, frames
+    means = {k: v / len(indices) for k, v in totals.items()}
+    return means, frames, per_design
 
 
 def main():
@@ -138,14 +141,14 @@ def main():
 
     model = smodel.load_pretrained_tsr(args.triposr_dir, device=device)
     model.renderer.set_chunk_size(0)
-    results["pretrained"], galleries["pretrained"] = evaluate(
+    results["pretrained"], galleries["pretrained"], per_pre = evaluate(
         model, dataset, indices, lpips, cfg, device, novel, "stock"
     )
 
     strain.apply_unfreeze_stage(model, 10**9, 10**9)  # every key the ckpt holds
     state = checkpoint.load_checkpoint(ckpt_path)
     smodel.load_trainable_state_dict(model, state["model"])
-    results[f"fine-tuned@{step}"], galleries["fine-tuned"] = evaluate(
+    results[f"fine-tuned@{step}"], galleries["fine-tuned"], per_ft = evaluate(
         model, dataset, indices, lpips, cfg, device, novel, "fine-tuned"
     )
 
@@ -160,7 +163,10 @@ def main():
     print("(PSNR and IoU up is better; MSE and LPIPS down is better)")
 
     out = rdir / "test_metrics.json"
-    out.write_text(json.dumps({"step": step, "designs": n, **results}, indent=1))
+    out.write_text(json.dumps({
+        "step": step, "designs": n, **results,
+        "per_design": {"pretrained": per_pre, "fine_tuned": per_ft},
+    }, indent=1))
     print(f"\nwrote {out}")
 
     rows = galleries["fine-tuned"]
