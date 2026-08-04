@@ -34,6 +34,7 @@ import torch.nn.functional as F
 
 from starx import cameras, data
 from starx.config import FOVY_DEG, SCENE_RADIUS, StarXConfig
+from starx.ssim3d import ssim3d as ssim3d_score
 
 
 def composite_over_gray(rgb_fg, opacity, bg: float = 0.5):
@@ -172,6 +173,59 @@ def soft_dice_loss(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-6):
     return 1 - (2 * intersection + eps) / (pred.sum() + target.sum() + eps)
 
 
+def ssim3d_occupancy_loss(
+    alpha: torch.Tensor, hull: torch.Tensor, observed: torch.Tensor,
+    res: int, win_size: int, sigma: float,
+) -> torch.Tensor:
+    """1 - SSIM3D between predicted occupancy and the visual hull, both
+    (res**3,) flattened from _grid_positions' (x, y, z) meshgrid order.
+
+    ssim3d has no masking primitive of its own - it is a dense conv over the
+    whole grid - so unobserved voxels get their target replaced by the
+    (detached) prediction: locally pred == target there, contributing ~zero
+    loss and no gradient, instead of teaching the model to match hull=1
+    (which at an unobserved voxel means only "no view ruled it out", not
+    "occupied" - see visual_hull_grid's docstring).
+    """
+    target = torch.where(observed, hull.float(), alpha.detach())
+    shape = (1, 1, res, res, res)
+    return 1.0 - ssim3d_score(
+        alpha.reshape(shape), target.reshape(shape),
+        data_range=1.0, win_size=win_size, sigma=sigma,
+        padding="same", pad_mode="replicate",
+    )
+
+
+def occupancy_3d_terms(
+    model, code_leaf, masks, c2ws, gt_size: int, cfg: StarXConfig, device: str,
+):
+    """3D-volume terms against the visual hull: soft-Dice and/or SSIM3D,
+    whichever cfg weights (both, either, or neither). They share one
+    query_alpha_grid call, so scoring both costs one extra loss evaluation
+    rather than a second pass through the triplane.
+
+    `masks`/`c2ws` must cover the design's FULL camera rig, not just the
+    views used for the 2D photometric loss - a partial rig would carve a
+    hull from evidence the model was never asked to match.
+    """
+    with torch.no_grad():
+        hull, observed = visual_hull_grid(masks, c2ws, cfg.hull_res, gt_size, device)
+    alpha = query_alpha_grid(model, code_leaf, cfg.hull_res)
+    loss = torch.zeros((), device=device)
+    parts = {"occ": 0.0, "ssim3d": 0.0}
+    if cfg.lambda_occ > 0:
+        dice = soft_dice_loss(alpha[observed], hull[observed])
+        loss = loss + cfg.lambda_occ * dice
+        parts["occ"] = float(dice.detach())
+    if cfg.lambda_ssim3d > 0:
+        ssim_term = ssim3d_occupancy_loss(
+            alpha, hull, observed, cfg.hull_res, cfg.ssim3d_win_size, cfg.ssim3d_sigma
+        )
+        loss = loss + cfg.lambda_ssim3d * ssim_term
+        parts["ssim3d"] = float(ssim_term.detach())
+    return loss, parts
+
+
 def train_step(
     step: int,
     model,
@@ -203,7 +257,7 @@ def train_step(
         step, cfg.accum_designs, len(train_dataset), cfg.seed
     )
     n_terms = cfg.accum_designs * cfg.views_per_design
-    totals = {"loss": 0.0, "mse": 0.0, "lpips": 0.0, "mask": 0.0, "occ": 0.0}
+    totals = {"loss": 0.0, "mse": 0.0, "lpips": 0.0, "mask": 0.0, "occ": 0.0, "ssim3d": 0.0}
 
     for index in indices[rank::world_size]:
         item = train_dataset[index]
@@ -248,16 +302,14 @@ def train_step(
             for key in ("mse", "lpips", "mask"):
                 totals[key] += parts[key] / n_terms
 
-        if cfg.lambda_occ > 0:
-            with torch.no_grad():
-                hull, observed = visual_hull_grid(
-                    item["masks"], c2ws, cfg.hull_res, cfg.gt_size, device
-                )
-            alpha = query_alpha_grid(model, code_leaf, cfg.hull_res)
-            occ_loss = soft_dice_loss(alpha[observed], hull[observed])
-            (cfg.lambda_occ * occ_loss / cfg.accum_designs).backward()
-            totals["occ"] += float(occ_loss) / cfg.accum_designs
-            totals["loss"] += cfg.lambda_occ * float(occ_loss) / cfg.accum_designs
+        if cfg.lambda_occ > 0 or cfg.lambda_ssim3d > 0:
+            loss3d, parts3d = occupancy_3d_terms(
+                model, code_leaf, item["masks"], c2ws, cfg.gt_size, cfg, device
+            )
+            (loss3d / cfg.accum_designs).backward()
+            for key, val in parts3d.items():
+                totals[key] += val / cfg.accum_designs
+            totals["loss"] += float(loss3d) / cfg.accum_designs
 
         # stage two: the accumulated scene-code gradient through the encoder
         scene_code.backward(gradient=code_leaf.grad * grad_scale)
@@ -270,10 +322,11 @@ def train_step(
                 p.grad = torch.zeros_like(p)
             dist.all_reduce(p.grad, op=dist.ReduceOp.SUM)
         stats = torch.tensor(
-            [totals[k] for k in ("loss", "mse", "lpips", "mask", "occ")], device=device
+            [totals[k] for k in ("loss", "mse", "lpips", "mask", "occ", "ssim3d")],
+            device=device,
         )
         dist.all_reduce(stats, op=dist.ReduceOp.SUM)
-        for i, k in enumerate(("loss", "mse", "lpips", "mask", "occ")):
+        for i, k in enumerate(("loss", "mse", "lpips", "mask", "occ", "ssim3d")):
             totals[k] = float(stats[i])
 
     if grad_scale != 1.0:
@@ -434,6 +487,12 @@ def paper_train_step(
     the baseline - each view backpropagates only to a detached scene-code
     leaf, then one encoder backward per design carries the accumulated
     gradient, which is the deferred backpropagation LRM describes.
+
+    When cfg.lambda_occ or cfg.lambda_ssim3d is set (off by default - not in
+    the paper), an additional 3D term scores the triplane's occupancy grid
+    against the design's visual hull, same as starx.train.train_step. That
+    needs the design's FULL camera rig, not just the supervised views, so
+    the batch must come from a SketchDataset built with return_all_masks=True.
     """
     from starx import model as smodel
 
@@ -441,7 +500,13 @@ def paper_train_step(
     inputs = batch["input"].to(device)  # (B, 3, S, S)
     batch_size = inputs.shape[0]
     n_terms = batch_size * batch["views"].shape[1]
-    totals = {"loss": 0.0, "mse": 0.0, "lpips": 0.0, "mask": 0.0}
+    totals = {"loss": 0.0, "mse": 0.0, "lpips": 0.0, "mask": 0.0, "occ": 0.0, "ssim3d": 0.0}
+    use_3d = cfg.lambda_occ > 0 or cfg.lambda_ssim3d > 0
+    if use_3d and "all_masks" not in batch:
+        raise ValueError(
+            "cfg.lambda_occ / cfg.lambda_ssim3d is set but the batch has no "
+            "'all_masks' - build the SketchDataset with return_all_masks=True"
+        )
 
     with torch.autocast("cuda", dtype=amp_dtype, enabled=device == "cuda"):
         scene_codes = smodel.encode_sketches(model, inputs)
@@ -477,6 +542,18 @@ def paper_train_step(
             totals["loss"] += float(loss.detach()) / n_terms
             for key in ("mse", "lpips", "mask"):
                 totals[key] += parts[key] / n_terms
+
+        if use_3d:
+            all_masks = batch["all_masks"][b].numpy()
+            all_c2ws = batch["all_c2ws"][b].numpy()
+            loss3d, parts3d = occupancy_3d_terms(
+                model, code_leaf, all_masks, all_c2ws, views.shape[1], cfg, device
+            )
+            (loss3d / batch_size).backward()
+            for key, val in parts3d.items():
+                totals[key] += val / batch_size
+            totals["loss"] += float(loss3d) / batch_size
+
         code_grads[b] = code_leaf.grad
 
     scene_codes.backward(gradient=code_grads * grad_scale)
@@ -495,10 +572,11 @@ def paper_train_step(
             dist.all_reduce(p.grad, op=dist.ReduceOp.SUM)
             p.grad.div_(world_size)
         stats = torch.tensor(
-            [totals[k] for k in ("loss", "mse", "lpips", "mask")], device=device
+            [totals[k] for k in ("loss", "mse", "lpips", "mask", "occ", "ssim3d")],
+            device=device,
         )
         dist.all_reduce(stats, op=dist.ReduceOp.SUM)
-        for i, k in enumerate(("loss", "mse", "lpips", "mask")):
+        for i, k in enumerate(("loss", "mse", "lpips", "mask", "occ", "ssim3d")):
             totals[k] = float(stats[i]) / world_size
 
     if grad_scale != 1.0:

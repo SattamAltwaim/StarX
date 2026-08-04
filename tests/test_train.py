@@ -20,6 +20,83 @@ def test_soft_dice_extremes():
     assert 0.2 < float(half) < 0.8
 
 
+def test_ssim3d_occupancy_loss_zero_for_perfect_prediction():
+    res = 12
+    hull = torch.zeros(res ** 3, dtype=torch.bool)
+    hull[: res ** 3 // 2] = True
+    observed = torch.ones(res ** 3, dtype=torch.bool)
+    alpha = hull.float()  # perfect prediction everywhere
+    loss = strain.ssim3d_occupancy_loss(alpha, hull, observed, res, win_size=5, sigma=1.0)
+    assert float(loss) < 1e-3
+
+
+def test_ssim3d_occupancy_loss_unobserved_voxels_are_free():
+    """Voxels outside `observed` must not be penalised regardless of what
+    the model predicts there - see the masking note in the docstring."""
+    res = 12
+    hull = torch.ones(res ** 3, dtype=torch.bool)  # never carved (all unseen)
+    observed = torch.zeros(res ** 3, dtype=torch.bool)
+    alpha_low = torch.zeros(res ** 3)
+    alpha_high = torch.ones(res ** 3)
+    loss_low = strain.ssim3d_occupancy_loss(alpha_low, hull, observed, res, 5, 1.0)
+    loss_high = strain.ssim3d_occupancy_loss(alpha_high, hull, observed, res, 5, 1.0)
+    assert float(loss_low) < 1e-3
+    assert float(loss_high) < 1e-3
+
+
+def test_ssim3d_occupancy_loss_penalises_mismatch_in_observed_region():
+    res = 12
+    hull = torch.zeros(res ** 3, dtype=torch.bool)
+    hull[: res ** 3 // 2] = True
+    observed = torch.ones(res ** 3, dtype=torch.bool)
+    wrong = (~hull).float()  # inverted prediction
+    loss = strain.ssim3d_occupancy_loss(wrong, hull, observed, res, win_size=5, sigma=1.0)
+    assert float(loss) > 0.5
+
+
+def test_ssim3d_occupancy_loss_gradient_flows_only_through_prediction():
+    res = 10
+    hull = torch.zeros(res ** 3, dtype=torch.bool)
+    hull[: res ** 3 // 3] = True
+    observed = torch.ones(res ** 3, dtype=torch.bool)
+    alpha = torch.full((res ** 3,), 0.5, requires_grad=True)
+    loss = strain.ssim3d_occupancy_loss(alpha, hull, observed, res, win_size=5, sigma=1.0)
+    loss.backward()
+    assert alpha.grad is not None
+    assert torch.isfinite(alpha.grad).all()
+
+
+def test_occupancy_3d_terms_respects_zero_weights():
+    """With both lambdas at 0, the combined term must be an inert zero -
+    scripts/train_sketch.py relies on this to leave the paper recipe alone."""
+    from starx.config import StarXConfig
+
+    class _FakeModel:
+        class renderer:
+            @staticmethod
+            def query_triplane(decoder, positions, code):
+                return {"density_act": torch.zeros(positions.shape[0], 1)}
+
+        decoder = None
+
+    cfg = StarXConfig(lambda_occ=0.0, lambda_ssim3d=0.0, hull_res=8)
+    masks = torch.ones(2, 16, 16, dtype=torch.bool).numpy()
+    import numpy as np
+
+    from starx import cameras
+    from starx.config import CAMERA_DISTANCE
+
+    c2ws = np.stack(
+        [cameras.build_spherical_c2w(a, 15.0, CAMERA_DISTANCE) for a in (0.0, 90.0)]
+    )
+    code_leaf = torch.zeros(3, 40, 8, 8, requires_grad=True)
+    loss, parts = strain.occupancy_3d_terms(
+        _FakeModel(), code_leaf, masks, c2ws, 16, cfg, "cpu"
+    )
+    assert float(loss) == 0.0
+    assert parts == {"occ": 0.0, "ssim3d": 0.0}
+
+
 def test_soft_dice_gradient_direction():
     target = torch.zeros(64)
     target[:32] = 1.0

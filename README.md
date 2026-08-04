@@ -69,6 +69,29 @@ the ray march, the training step); the package contains deterministic plumbing t
 several notebooks share and that is unit-tested locally. `starx/pins.py` is the single
 source of truth for the TripoSR commit and per-notebook pip installs.
 
+## Beyond the paper: SSIM3D + the assembly dataset
+
+`scripts/finetune_ssim3d.py` (with `scripts/finetune_ssim3d.sbatch` for Ibex)
+takes `scripts/train_sketch.py`'s already-fine-tuned checkpoint and fine-tunes
+it again with two additions, neither in the TripoSR report:
+
+- **`starx/ssim3d.py`** - differentiable 3D SSIM / MS-SSIM. `starx.train.
+  occupancy_3d_terms` / `ssim3d_occupancy_loss` score the triplane's predicted
+  occupancy grid against the same visual hull the baseline's soft-Dice term
+  (`cfg.lambda_occ`) already carves from the design's silhouettes;
+  `cfg.lambda_ssim3d` turns it on, and it can run alongside or instead of Dice.
+- **The assembly dataset** (notebooks 13/14/16, Fusion 360 Gallery joint data
+  j1.0.0) merges into the same training pool as the reconstruction designs -
+  `starx.config.assembly_shard_dir` / `assembly_sketch_shard_dir` are siblings
+  of `shard_dir` / `sketch_shard_dir`, same tar/meta.json schema, extracted
+  into the same local cache. `--no-assembly` opts back out.
+
+`--init-checkpoint` points at the prior run's directory (or a specific
+`state_*.pt`) to seed weights without inheriting its optimizer, scheduler, or
+step - this is a new run with a new loss and more data, not a resumed one.
+Run `scripts/preflight.py --script scripts/finetune_ssim3d.py --assembly
+--init-checkpoint <path>` before submitting, same as the other recipes.
+
 ## Local development
 
 ```

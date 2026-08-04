@@ -102,7 +102,7 @@ def _imports(args):
 
 @check("starx package")
 def _starx(args):
-    from starx import cameras, checkpoint, data, shards, sketchdata, synth  # noqa: F401
+    from starx import cameras, checkpoint, data, shards, sketchdata, ssim3d, synth  # noqa: F401
     from starx import model as smodel  # noqa: F401
     from starx import train as strain  # noqa: F401
 
@@ -134,13 +134,33 @@ def _script(args):
     seconds in, exactly the failure this whole file exists to prevent."""
     import importlib.util
 
-    path = REPO_DIR / "scripts" / "train_sketch.py"
-    spec = importlib.util.spec_from_file_location("_starx_train_sketch", path)
+    path = (REPO_DIR / args.script).resolve()
+    spec = importlib.util.spec_from_file_location("_starx_training_script", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     if not callable(getattr(module, "main", None)):
         raise AttributeError(f"{path.name} defines no main()")
     return f"{path.name} imports, main() present"
+
+
+@check("ssim3d numerics")
+def _ssim3d(args):
+    """Run the 3D SSIM loss on tiny synthetic volumes: catches a broken
+    torch/conv3d install or a shape regression before it reaches the job,
+    same reasoning as the checkpoint-roundtrip check below."""
+    import torch
+
+    from starx.ssim3d import ms_ssim3d, ssim3d
+
+    x = torch.rand(1, 1, 12, 12, 12)
+    identical = float(ssim3d(x, x, win_size=5, sigma=1.0))
+    if not (0.99 <= identical <= 1.0):
+        raise AssertionError(f"ssim3d(x, x) = {identical}, expected ~1.0")
+    noisy = float(ssim3d(x, torch.rand(1, 1, 12, 12, 12), win_size=5, sigma=1.0))
+    if not (noisy < identical):
+        raise AssertionError(f"ssim3d did not score noise below a perfect match")
+    ms = float(ms_ssim3d(x, x, win_size=5, sigma=1.0, pool=1))
+    return f"ssim3d(x,x)={identical:.4f}, ms_ssim3d(x,x)={ms:.4f}"
 
 
 @check("triposr weights cached")
@@ -205,6 +225,58 @@ def _shards(args):
         )
         notes.append(f"{split}: {len(designs)} design + {len(sk)} sketch shards")
     return "; ".join(notes)
+
+
+@check("assembly shards on disk")
+def _assembly_shards(args):
+    """Only runs with --assembly (scripts/finetune_ssim3d.py merges this
+    dataset in by default; skip with --no-assembly there and here)."""
+    if not args.assembly:
+        return "skipped (--assembly not passed)"
+    from starx import shards, sketchdata
+    from starx.config import StarXConfig, assembly_shard_dir, assembly_sketch_shard_dir
+
+    cfg = StarXConfig(drive_root=args.data_root)
+    notes = []
+    for split in ("train", "test"):
+        designs = shards.list_done_shards(assembly_shard_dir(cfg, split))
+        if not designs:
+            raise FileNotFoundError(
+                f"no assembly shards at {assembly_shard_dir(cfg, split)} - run "
+                f"notebook 16, or drop --assembly / pass --no-assembly to the script"
+            )
+        sk = shards.list_done_shards(
+            assembly_sketch_shard_dir(cfg, split), sketchdata.SKETCH_PREFIX
+        )
+        notes.append(f"{split}: {len(designs)} design + {len(sk)} sketch shards")
+    return "; ".join(notes)
+
+
+@check("init checkpoint")
+def _init_checkpoint(args):
+    """Only runs with --init-checkpoint (finetune_ssim3d.py's weight-seeding
+    path). Resolves the same way the script does: a run dir's newest
+    checkpoint, or a specific state_*.pt file."""
+    if not args.init_checkpoint:
+        return "skipped (--init-checkpoint not passed)"
+    from starx import checkpoint
+
+    path = Path(args.init_checkpoint)
+    if path.is_dir():
+        latest = checkpoint.find_latest(path)
+        if latest is None:
+            raise FileNotFoundError(f"no checkpoints under {path}")
+        ckpt_path, step = latest
+    elif path.exists():
+        ckpt_path, step = path, None
+    else:
+        raise FileNotFoundError(f"--init-checkpoint {path} does not exist")
+    state = checkpoint.load_checkpoint(ckpt_path)
+    if "model" not in state:
+        raise KeyError(f"{ckpt_path} has no 'model' key: {sorted(state)[:5]}")
+    return f"{ckpt_path} ({len(state['model'])} tensors" + (
+        f", step {step})" if step is not None else ")"
+    )
 
 
 @check("local cache")
@@ -388,6 +460,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-root", required=True)
     parser.add_argument("--run-name", default="sketch_ft_ddp")
+    parser.add_argument("--script", default="scripts/train_sketch.py",
+                        help="training script to import-check (repo-relative)")
+    parser.add_argument("--assembly", action="store_true",
+                        help="also check the assembly dataset shards exist")
+    parser.add_argument("--init-checkpoint", default=None,
+                        help="also check this run dir / state_*.pt resolves and loads")
     parser.add_argument("--supervision-views", type=int, default=13)
     parser.add_argument("--batch", type=int, default=4)
     parser.add_argument("--workers", type=int, default=8)

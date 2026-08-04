@@ -257,6 +257,36 @@ def load_trainable_state_dict(model, state: dict) -> None:
             param.copy_(state[name].to(param.device, param.dtype))
 
 
+def load_full_state_dict(model, state: dict) -> dict:
+    """Copy every provided tensor into the matching parameter by name,
+    ignoring requires_grad - unlike load_trainable_state_dict, which only
+    accepts a state matching the model's CURRENTLY trainable set.
+
+    Used to seed a new run from a prior run's checkpoint: apply_unfreeze_stage
+    freezes most of the model again at step 0 of the new schedule, but the
+    prior run's weights (learned across its whole schedule) should still
+    seed every parameter, trainable or not. Pass the prior run's FINAL
+    checkpoint - trainable_state_dict only saved whichever groups its own
+    schedule had open, so an early checkpoint would be missing the rest.
+
+    Strict both ways: every name in state must exist on the model and every
+    model parameter must be covered, so a stale or architecturally different
+    checkpoint fails here instead of training from a half-seeded model.
+    """
+    own = dict(model.named_parameters())
+    missing = set(own) - set(state)
+    unexpected = set(state) - set(own)
+    if missing or unexpected:
+        raise ValueError(
+            f"state dict does not match model parameters: "
+            f"missing={sorted(missing)[:5]} unexpected={sorted(unexpected)[:5]}"
+        )
+    with torch.no_grad():
+        for name, param in own.items():
+            param.copy_(state[name].to(param.device, param.dtype))
+    return {"loaded": len(own)}
+
+
 def encode_sketches(model, sketch_batch: torch.Tensor) -> torch.Tensor:
     """Sketch stacks (B, C, H, W) in [0, 1] -> scene codes (B, 3, 40, 64, 64).
 

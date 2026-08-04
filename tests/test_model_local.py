@@ -86,3 +86,36 @@ def test_trainable_state_roundtrip_on_toy_module():
 
     with pytest.raises(ValueError, match="mismatch"):
         smodel.load_trainable_state_dict(clone, {"bogus.weight": torch.zeros(1)})
+
+
+def test_load_full_state_dict_ignores_current_requires_grad():
+    """Seeding a new run from a prior run's checkpoint must copy every
+    parameter's VALUE regardless of which ones this run's own unfreeze
+    schedule currently has trainable (apply_unfreeze_stage(step=0, ...)
+    freezes most of the model before this ever gets called)."""
+    src = torch.nn.Sequential(torch.nn.Linear(4, 4), torch.nn.Linear(4, 2))
+    state = {name: p.detach().clone() for name, p in src.named_parameters()}
+
+    dst = torch.nn.Sequential(torch.nn.Linear(4, 4), torch.nn.Linear(4, 2))
+    for p in dst[0].parameters():
+        p.requires_grad_(False)  # simulates the fresh schedule's frozen group
+    info = smodel.load_full_state_dict(dst, state)
+    assert info["loaded"] == 4  # two Linear layers, weight + bias each
+
+    for (name_s, p_s), (name_d, p_d) in zip(
+        src.named_parameters(), dst.named_parameters()
+    ):
+        assert name_s == name_d
+        torch.testing.assert_close(p_s, p_d)
+    assert not dst[0].weight.requires_grad  # load must not touch requires_grad
+    assert dst[1].weight.requires_grad
+
+
+def test_load_full_state_dict_rejects_mismatched_keys():
+    dst = torch.nn.Sequential(torch.nn.Linear(4, 4), torch.nn.Linear(4, 2))
+    with pytest.raises(ValueError, match="match"):
+        smodel.load_full_state_dict(dst, {"bogus.weight": torch.zeros(1)})
+
+    partial = {"0.weight": dst[0].weight.detach().clone()}
+    with pytest.raises(ValueError, match="match"):
+        smodel.load_full_state_dict(dst, partial)

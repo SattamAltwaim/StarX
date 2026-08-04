@@ -91,6 +91,9 @@ class StarXConfig:
     lambda_mask: float = 0.05
     lambda_occ: float = 0.5  # 3D visual-hull soft-Dice term (0 disables)
     hull_res: int = 48  # occupancy grid resolution for the 3D term
+    lambda_ssim3d: float = 0.0  # 3D visual-hull SSIM term (0 disables); see starx.ssim3d
+    ssim3d_win_size: int = 7  # must be odd and <= hull_res
+    ssim3d_sigma: float = 1.5
     grad_clip: float = 1.0
     ckpt_every: int = 500
     keep_k: int = 3
@@ -126,6 +129,21 @@ def sketch_shard_dir(cfg: StarXConfig, split: str) -> Path:
     """Drive directory holding one split's synthetic-sketch shards. A sibling
     of the design shards, extracted into the same local cache."""
     return Path(cfg.drive_root) / "sketch_shards" / split
+
+
+def assembly_shard_dir(cfg: StarXConfig, split: str) -> Path:
+    """Drive directory holding one split's assembly-dataset shards (notebook
+    16, Fusion 360 Gallery joint/assembly data j1.0.0). Own tree, parallel to
+    but never overlapping shard_dir - same tar/meta.json schema (starx.shards),
+    so extracting it into the same local cache as shard_dir merges the two
+    design sets into one training pool with zero Dataset-side changes."""
+    return Path(cfg.drive_root) / "assembly_shards" / split
+
+
+def assembly_sketch_shard_dir(cfg: StarXConfig, split: str) -> Path:
+    """Drive directory holding one split's synthetic-sketch shards for the
+    assembly designs. A sibling of sketch_shard_dir, same relationship."""
+    return Path(cfg.drive_root) / "assembly_sketch_shards" / split
 
 
 def run_dir(cfg: StarXConfig, run_name: str) -> Path:
