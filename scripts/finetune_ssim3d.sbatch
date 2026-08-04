@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=starx_ssim3d_ft
-#SBATCH --gres=gpu:a100:2
-#SBATCH --cpus-per-task=16
-#SBATCH --mem=200G
+#SBATCH --gres=gpu:a100:4
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=400G
 #SBATCH --time=24:00:00
 #SBATCH --output=slurm_logs/%x-%j.out
 #SBATCH --error=slurm_logs/%x-%j.out
@@ -84,10 +84,11 @@ echo ">>> preflight"
 }
 
 # 2. Train on every allocated GPU. torchrun --standalone rendezvouses within
-#    this node, which is all a 2x A100 node needs.
-NPROC="${SLURM_GPUS_ON_NODE:-2}"
+#    this node, which is all a 4x A100 node needs (Ibex's 4-GPU A100 nodes
+#    have 62 allocatable cores / 512G RAM, so this fits without spanning nodes).
+NPROC="${SLURM_GPUS_ON_NODE:-4}"
 echo ">>> training on $NPROC GPU(s)"
-srun --ntasks=1 --cpus-per-task="${SLURM_CPUS_PER_TASK:-16}" \
+srun --ntasks=1 --cpus-per-task="${SLURM_CPUS_PER_TASK:-32}" \
   "$PYTHON" -m torch.distributed.run \
     --standalone --nproc_per_node="$NPROC" \
     scripts/finetune_ssim3d.py \
