@@ -194,6 +194,23 @@ def _weights(args):
     )
 
 
+@check("checkpoint loads into TSR")
+def _pretrained_load(args):
+    """Actually load the pretrained state dict into TSR on CPU - the one
+    thing every other check stops short of. "tsr import chain" only imports
+    the module tree; "triposr weights cached" only checks the files exist.
+    Neither exercises TSR.from_pretrained's load_state_dict, which is
+    exactly where a transformers version past the ViT rename (see
+    starx.model.load_pretrained_tsr's error message, and starx/pins.py)
+    fails - silently passing every other check and then killing the job
+    the moment it tries to build the model. CPU, ~1.7 GiB, a few seconds.
+    """
+    from starx import model as smodel
+
+    smodel.load_pretrained_tsr(args.triposr_dir, device="cpu")
+    return "TSR.from_pretrained loaded the checkpoint cleanly"
+
+
 @check("triposr clone")
 def _triposr(args):
     from starx import pins
