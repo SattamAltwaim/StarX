@@ -210,9 +210,15 @@ def main():
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
     distributed = world_size > 1
     if distributed:
+        import datetime
+
         import torch.distributed as dist
 
-        dist.init_process_group("nccl")
+        # rank 0 alone does the (possibly slow, first-run) shard extraction
+        # below before every rank's first collective op (the barrier right
+        # after it) - the default 10-minute NCCL store timeout has nothing
+        # to do with how long that takes and was measured failing here.
+        dist.init_process_group("nccl", timeout=datetime.timedelta(minutes=60))
         torch.cuda.set_device(local_rank)
     device = f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu"
     main_rank = rank == 0
