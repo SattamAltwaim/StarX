@@ -32,10 +32,17 @@
 set -euo pipefail
 
 REPO="${STARX_REPO:-$HOME/StarX}"
-DATA_ROOT="${STARX_DATA:-$REPO/data/StarX}"
+# defaults match this project's actual Ibex layout - notebook 08 lands data at
+# /ibex/user/$USER/StarX (never $REPO/data/StarX, which is a bare local dir),
+# and the conda env lives under $HOME/miniconda3, not /ibex/user's miniforge.
+# A job that silently fell back to the old wrong defaults failed its own
+# preflight after 1s, which is the gate working - but better to just have the
+# right default than rely on STARX_DATA/STARX_PYTHON being re-exported every
+# session.
+DATA_ROOT="${STARX_DATA:-/ibex/user/$USER/StarX}"
 RUN_NAME="${STARX_RUN:-ssim3d_assembly_ft}"
 INIT_RUN="${STARX_INIT_RUN:-$DATA_ROOT/runs/sketch_ft_ddp}"
-PYTHON="${STARX_PYTHON:-/ibex/user/$USER/miniforge/envs/starx/bin/python}"
+PYTHON="${STARX_PYTHON:-$HOME/miniconda3/envs/starx/bin/python}"
 LAMBDA_SSIM3D="${STARX_LAMBDA_SSIM3D:-0.1}"
 if [ "${STARX_NO_ASSEMBLY:-0}" = "1" ]; then
     ASSEMBLY_FLAG="--no-assembly"

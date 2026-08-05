@@ -37,9 +37,13 @@
 set -euo pipefail
 
 REPO="${STARX_REPO:-$HOME/StarX}"
-DATA_ROOT="${STARX_DATA:-$REPO/data/StarX}"
+# see finetune_ssim3d.sbatch's comment: these match this project's actual
+# Ibex layout (notebook 08's /ibex/user/$USER/StarX, $HOME/miniconda3), not
+# generic placeholders - a wrong fallback here fails preflight in ~1s rather
+# than silently training against the wrong data or a missing interpreter.
+DATA_ROOT="${STARX_DATA:-/ibex/user/$USER/StarX}"
 RUN_NAME="${STARX_RUN:-sketch_ft_ddp}"
-PYTHON="${STARX_PYTHON:-/ibex/user/$USER/miniforge/envs/starx/bin/python}"
+PYTHON="${STARX_PYTHON:-$HOME/miniconda3/envs/starx/bin/python}"
 
 # never let a --user install shadow the environment's torch
 export PYTHONNOUSERSITE=1
