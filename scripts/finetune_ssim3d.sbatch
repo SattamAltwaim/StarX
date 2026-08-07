@@ -44,6 +44,10 @@ RUN_NAME="${STARX_RUN:-ssim3d_assembly_ft}"
 INIT_RUN="${STARX_INIT_RUN:-$DATA_ROOT/runs/sketch_ft_ddp}"
 PYTHON="${STARX_PYTHON:-$HOME/miniconda3/envs/starx/bin/python}"
 LAMBDA_SSIM3D="${STARX_LAMBDA_SSIM3D:-0.1}"
+LAMBDA_OCC="${STARX_LAMBDA_OCC:-0.0}"
+LAMBDA_LAPLACIAN="${STARX_LAMBDA_LAPLACIAN:-0.0}"
+HULL_RES="${STARX_HULL_RES:-48}"
+TOTAL_STEPS="${STARX_TOTAL_STEPS:-12000}"
 if [ "${STARX_NO_ASSEMBLY:-0}" = "1" ]; then
     ASSEMBLY_FLAG="--no-assembly"
     PREFLIGHT_ASSEMBLY_FLAG=""
@@ -69,7 +73,8 @@ echo "repo       : $REPO"
 echo "data root  : $DATA_ROOT"
 echo "run name   : $RUN_NAME"
 echo "init run   : $INIT_RUN"
-echo "lambda_ssim3d: $LAMBDA_SSIM3D"
+echo "lambda_ssim3d: $LAMBDA_SSIM3D, lambda_occ: $LAMBDA_OCC, lambda_laplacian: $LAMBDA_LAPLACIAN"
+echo "hull_res   : $HULL_RES, total_steps: $TOTAL_STEPS"
 echo "assembly   : $ASSEMBLY_LABEL"
 echo "python     : $PYTHON"
 echo "gpus       : ${SLURM_GPUS_ON_NODE:-?}"
@@ -105,10 +110,13 @@ srun --ntasks=1 --cpus-per-task="${SLURM_CPUS_PER_TASK:-16}" \
       --run-name "$RUN_NAME" \
       --init-checkpoint "$INIT_RUN" \
       --lambda-ssim3d "$LAMBDA_SSIM3D" \
+      --lambda-occ "$LAMBDA_OCC" \
+      --lambda-laplacian "$LAMBDA_LAPLACIAN" \
+      --hull-res "$HULL_RES" \
       $ASSEMBLY_FLAG \
       --supervision-views 13 \
       --batch-designs 2 \
-      --total-steps 12000 \
+      --total-steps "$TOTAL_STEPS" \
       --lr 1e-4 \
       --warmup-steps 500 \
       --workers 8
