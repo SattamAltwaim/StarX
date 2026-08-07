@@ -111,6 +111,10 @@ def parse_args():
     parser.add_argument("--lambda-occ", type=float, default=0.0,
                         help="soft-Dice term against the same hull; 0 disables, can "
                              "be combined with --lambda-ssim3d")
+    parser.add_argument("--lambda-laplacian", type=float, default=0.0,
+                        help="occupancy-grid smoothness regularizer (discrete Laplacian "
+                             "penalty, no hull/target needed); 0 disables, can be "
+                             "combined with either term above")
     parser.add_argument("--hull-res", type=int, default=48)
 
     # the paper is silent on these
@@ -236,6 +240,7 @@ def main():
         lambda_ssim3d=args.lambda_ssim3d,
         ssim3d_win_size=args.ssim3d_win,
         ssim3d_sigma=args.ssim3d_sigma,
+        lambda_laplacian=args.lambda_laplacian,
         hull_res=args.hull_res,
         render_crop=args.render_crop,
         batch_designs=args.batch_designs,
@@ -248,7 +253,7 @@ def main():
         keep_k=args.keep_k,
         seed=args.seed,
     )
-    use_3d = cfg.lambda_occ > 0 or cfg.lambda_ssim3d > 0
+    use_3d = cfg.lambda_occ > 0 or cfg.lambda_ssim3d > 0 or cfg.lambda_laplacian > 0
     amp_dtype, grad_scale = strain.pick_amp(
         "cuda" if device.startswith("cuda") else device
     )
@@ -312,8 +317,9 @@ def main():
         print(f"  fine-tuning: {'LoRA' if args.lora else 'every parameter'}")
         print(f"  3D terms: lambda_occ={cfg.lambda_occ}, "
               f"lambda_ssim3d={cfg.lambda_ssim3d} "
-              f"(win={cfg.ssim3d_win_size}, sigma={cfg.ssim3d_sigma}, "
-              f"hull_res={cfg.hull_res})")
+              f"(win={cfg.ssim3d_win_size}, sigma={cfg.ssim3d_sigma}), "
+              f"lambda_laplacian={cfg.lambda_laplacian}, "
+              f"hull_res={cfg.hull_res}")
         if args.init_checkpoint:
             print(f"  init checkpoint: {args.init_checkpoint}")
 
@@ -449,7 +455,8 @@ def main():
                     rate = (step - start_step) / (time.time() - started)
                     extra = ""
                     if use_3d:
-                        extra = f"  occ {totals['occ']:.4f}  ssim3d {totals['ssim3d']:.4f}"
+                        extra = (f"  occ {totals['occ']:.4f}  ssim3d {totals['ssim3d']:.4f}"
+                                  f"  laplacian {totals['laplacian']:.4f}")
                     print(f"step {step}/{total_steps} (epoch {epoch})  "
                           f"loss {totals['loss']:.4f}  lr {totals['lr']:.2e}  "
                           f"{rate:.2f} step/s{extra}", flush=True)

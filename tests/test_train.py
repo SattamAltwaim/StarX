@@ -9,6 +9,57 @@ from starx import train as strain
 from starx.config import CAMERA_DISTANCE, SCENE_RADIUS
 
 
+def test_laplacian_smoothness_zero_for_constant_field():
+    res = 8
+    const = torch.full((res ** 3,), 0.7)
+    loss = strain.laplacian_smoothness_loss(const, res)
+    assert float(loss) < 1e-6  # replicate padding: no fake boundary edges
+
+
+def test_laplacian_smoothness_penalizes_noise_more_than_smooth_fields():
+    res = 8
+    torch.manual_seed(0)
+    noisy = torch.rand(res ** 3)
+    xs = torch.linspace(0, 1, res)
+    grid = torch.stack(torch.meshgrid(xs, xs, xs, indexing="ij"), dim=-1)
+    linear = grid[..., 0].reshape(-1)  # zero true second derivative
+    assert strain.laplacian_smoothness_loss(noisy, res) > 10 * strain.laplacian_smoothness_loss(linear, res)
+
+
+def test_laplacian_smoothness_gradient_flows():
+    res = 6
+    alpha = torch.rand(res ** 3, requires_grad=True)
+    strain.laplacian_smoothness_loss(alpha, res).backward()
+    assert alpha.grad is not None
+    assert torch.isfinite(alpha.grad).all()
+
+
+def test_occupancy_3d_terms_includes_laplacian_when_weighted():
+    from starx.config import StarXConfig
+
+    class _FakeModel:
+        class renderer:
+            @staticmethod
+            def query_triplane(decoder, positions, code):
+                torch.manual_seed(0)
+                return {"density_act": torch.rand(positions.shape[0], 1) * 50}
+
+        decoder = None
+
+    cfg = StarXConfig(lambda_occ=0.0, lambda_ssim3d=0.0, lambda_laplacian=0.5, hull_res=8)
+    masks = torch.ones(2, 16, 16, dtype=torch.bool).numpy()
+    c2ws = np.stack(
+        [cameras.build_spherical_c2w(a, 15.0, CAMERA_DISTANCE) for a in (0.0, 90.0)]
+    )
+    code_leaf = torch.zeros(3, 40, 8, 8, requires_grad=True)
+    loss, parts = strain.occupancy_3d_terms(
+        _FakeModel(), code_leaf, masks, c2ws, 16, cfg, "cpu"
+    )
+    assert parts["occ"] == 0.0 and parts["ssim3d"] == 0.0
+    assert parts["laplacian"] > 0.0
+    assert float(loss) == pytest.approx(0.5 * parts["laplacian"], rel=1e-4)
+
+
 def test_soft_dice_extremes():
     target = torch.zeros(100)
     target[:50] = 1.0
@@ -94,7 +145,7 @@ def test_occupancy_3d_terms_respects_zero_weights():
         _FakeModel(), code_leaf, masks, c2ws, 16, cfg, "cpu"
     )
     assert float(loss) == 0.0
-    assert parts == {"occ": 0.0, "ssim3d": 0.0}
+    assert parts == {"occ": 0.0, "ssim3d": 0.0, "laplacian": 0.0}
 
 
 def test_soft_dice_gradient_direction():
