@@ -108,6 +108,10 @@ def parse_args():
     parser.add_argument("--ssim3d-win", type=int, default=7,
                         help="odd, must be <= --hull-res")
     parser.add_argument("--ssim3d-sigma", type=float, default=1.5)
+    parser.add_argument("--lambda-ms-ssim3d", type=float, default=0.0,
+                        help="multi-scale variant of --lambda-ssim3d (scores structure "
+                             "at multiple resolutions, not just --hull-res); 0 disables, "
+                             "shares --ssim3d-win/--ssim3d-sigma as its finest-scale settings")
     parser.add_argument("--lambda-occ", type=float, default=0.0,
                         help="soft-Dice term against the same hull; 0 disables, can "
                              "be combined with --lambda-ssim3d")
@@ -240,6 +244,7 @@ def main():
         lambda_ssim3d=args.lambda_ssim3d,
         ssim3d_win_size=args.ssim3d_win,
         ssim3d_sigma=args.ssim3d_sigma,
+        lambda_ms_ssim3d=args.lambda_ms_ssim3d,
         lambda_laplacian=args.lambda_laplacian,
         hull_res=args.hull_res,
         render_crop=args.render_crop,
@@ -253,7 +258,8 @@ def main():
         keep_k=args.keep_k,
         seed=args.seed,
     )
-    use_3d = cfg.lambda_occ > 0 or cfg.lambda_ssim3d > 0 or cfg.lambda_laplacian > 0
+    use_3d = (cfg.lambda_occ > 0 or cfg.lambda_ssim3d > 0 or cfg.lambda_ms_ssim3d > 0
+              or cfg.lambda_laplacian > 0)
     amp_dtype, grad_scale = strain.pick_amp(
         "cuda" if device.startswith("cuda") else device
     )
@@ -316,7 +322,8 @@ def main():
               f"betas {tuple(cfg.adam_betas)}, amp {amp_dtype}")
         print(f"  fine-tuning: {'LoRA' if args.lora else 'every parameter'}")
         print(f"  3D terms: lambda_occ={cfg.lambda_occ}, "
-              f"lambda_ssim3d={cfg.lambda_ssim3d} "
+              f"lambda_ssim3d={cfg.lambda_ssim3d}, "
+              f"lambda_ms_ssim3d={cfg.lambda_ms_ssim3d} "
               f"(win={cfg.ssim3d_win_size}, sigma={cfg.ssim3d_sigma}), "
               f"lambda_laplacian={cfg.lambda_laplacian}, "
               f"hull_res={cfg.hull_res}")
@@ -456,6 +463,7 @@ def main():
                     extra = ""
                     if use_3d:
                         extra = (f"  occ {totals['occ']:.4f}  ssim3d {totals['ssim3d']:.4f}"
+                                  f"  ms_ssim3d {totals['ms_ssim3d']:.4f}"
                                   f"  laplacian {totals['laplacian']:.4f}")
                     print(f"step {step}/{total_steps} (epoch {epoch})  "
                           f"loss {totals['loss']:.4f}  lr {totals['lr']:.2e}  "

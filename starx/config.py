@@ -94,6 +94,7 @@ class StarXConfig:
     lambda_ssim3d: float = 0.0  # 3D visual-hull SSIM term (0 disables); see starx.ssim3d
     ssim3d_win_size: int = 7  # must be odd and <= hull_res
     ssim3d_sigma: float = 1.5
+    lambda_ms_ssim3d: float = 0.0  # multi-scale variant of the same term (0 disables)
     lambda_laplacian: float = 0.0  # occupancy-grid smoothness regularizer (0 disables)
     grad_clip: float = 1.0
     ckpt_every: int = 500

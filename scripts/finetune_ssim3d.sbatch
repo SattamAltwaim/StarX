@@ -44,6 +44,7 @@ RUN_NAME="${STARX_RUN:-ssim3d_assembly_ft}"
 INIT_RUN="${STARX_INIT_RUN:-$DATA_ROOT/runs/sketch_ft_ddp}"
 PYTHON="${STARX_PYTHON:-$HOME/miniconda3/envs/starx/bin/python}"
 LAMBDA_SSIM3D="${STARX_LAMBDA_SSIM3D:-0.1}"
+LAMBDA_MS_SSIM3D="${STARX_LAMBDA_MS_SSIM3D:-0.0}"
 LAMBDA_OCC="${STARX_LAMBDA_OCC:-0.0}"
 LAMBDA_LAPLACIAN="${STARX_LAMBDA_LAPLACIAN:-0.0}"
 HULL_RES="${STARX_HULL_RES:-48}"
@@ -73,7 +74,7 @@ echo "repo       : $REPO"
 echo "data root  : $DATA_ROOT"
 echo "run name   : $RUN_NAME"
 echo "init run   : $INIT_RUN"
-echo "lambda_ssim3d: $LAMBDA_SSIM3D, lambda_occ: $LAMBDA_OCC, lambda_laplacian: $LAMBDA_LAPLACIAN"
+echo "lambda_ssim3d: $LAMBDA_SSIM3D, lambda_ms_ssim3d: $LAMBDA_MS_SSIM3D, lambda_occ: $LAMBDA_OCC, lambda_laplacian: $LAMBDA_LAPLACIAN"
 echo "hull_res   : $HULL_RES, total_steps: $TOTAL_STEPS"
 echo "assembly   : $ASSEMBLY_LABEL"
 echo "python     : $PYTHON"
@@ -110,6 +111,7 @@ srun --ntasks=1 --cpus-per-task="${SLURM_CPUS_PER_TASK:-16}" \
       --run-name "$RUN_NAME" \
       --init-checkpoint "$INIT_RUN" \
       --lambda-ssim3d "$LAMBDA_SSIM3D" \
+      --lambda-ms-ssim3d "$LAMBDA_MS_SSIM3D" \
       --lambda-occ "$LAMBDA_OCC" \
       --lambda-laplacian "$LAMBDA_LAPLACIAN" \
       --hull-res "$HULL_RES" \

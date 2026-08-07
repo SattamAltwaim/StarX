@@ -9,6 +9,80 @@ from starx import train as strain
 from starx.config import CAMERA_DISTANCE, SCENE_RADIUS
 
 
+def test_ms_ssim3d_occupancy_loss_zero_for_perfect_prediction():
+    # ms_ssim3d's default 3-level pool=2 needs res >= win_size * 2**2
+    res = 24
+    hull = torch.zeros(res ** 3, dtype=torch.bool)
+    hull[: res ** 3 // 2] = True
+    observed = torch.ones(res ** 3, dtype=torch.bool)
+    alpha = hull.float()
+    loss = strain.ms_ssim3d_occupancy_loss(alpha, hull, observed, res, win_size=5, sigma=1.0)
+    assert float(loss) < 1e-3
+
+
+def test_ms_ssim3d_occupancy_loss_unobserved_voxels_are_free():
+    res = 24
+    hull = torch.ones(res ** 3, dtype=torch.bool)
+    observed = torch.zeros(res ** 3, dtype=torch.bool)
+    alpha_low = torch.zeros(res ** 3)
+    alpha_high = torch.ones(res ** 3)
+    loss_low = strain.ms_ssim3d_occupancy_loss(alpha_low, hull, observed, res, 5, 1.0)
+    loss_high = strain.ms_ssim3d_occupancy_loss(alpha_high, hull, observed, res, 5, 1.0)
+    assert float(loss_low) < 1e-3
+    assert float(loss_high) < 1e-3
+
+
+def test_ms_ssim3d_occupancy_loss_penalises_mismatch_in_observed_region():
+    res = 24
+    hull = torch.zeros(res ** 3, dtype=torch.bool)
+    hull[: res ** 3 // 2] = True
+    observed = torch.ones(res ** 3, dtype=torch.bool)
+    wrong = (~hull).float()
+    loss = strain.ms_ssim3d_occupancy_loss(wrong, hull, observed, res, win_size=5, sigma=1.0)
+    assert float(loss) > 0.5
+
+
+def test_ms_ssim3d_occupancy_loss_gradient_flows():
+    res = 24
+    hull = torch.zeros(res ** 3, dtype=torch.bool)
+    hull[: res ** 3 // 3] = True
+    observed = torch.ones(res ** 3, dtype=torch.bool)
+    alpha = torch.full((res ** 3,), 0.5, requires_grad=True)
+    loss = strain.ms_ssim3d_occupancy_loss(alpha, hull, observed, res, win_size=5, sigma=1.0)
+    loss.backward()
+    assert alpha.grad is not None
+    assert torch.isfinite(alpha.grad).all()
+
+
+def test_occupancy_3d_terms_includes_ms_ssim3d_when_weighted():
+    from starx.config import StarXConfig
+
+    class _FakeModel:
+        class renderer:
+            @staticmethod
+            def query_triplane(decoder, positions, code):
+                torch.manual_seed(0)
+                return {"density_act": torch.rand(positions.shape[0], 1) * 50}
+
+        decoder = None
+
+    # hull_res must clear ms_ssim3d's 3-level pool=2 requirement at the
+    # config's default win_size=7: need >= 7 * 2**2 = 28
+    cfg = StarXConfig(lambda_occ=0.0, lambda_ssim3d=0.0, lambda_ms_ssim3d=0.2,
+                      lambda_laplacian=0.0, hull_res=32)
+    masks = torch.ones(2, 16, 16, dtype=torch.bool).numpy()
+    c2ws = np.stack(
+        [cameras.build_spherical_c2w(a, 15.0, CAMERA_DISTANCE) for a in (0.0, 90.0)]
+    )
+    code_leaf = torch.zeros(3, 40, 8, 8, requires_grad=True)
+    loss, parts = strain.occupancy_3d_terms(
+        _FakeModel(), code_leaf, masks, c2ws, 16, cfg, "cpu"
+    )
+    assert parts["occ"] == 0.0 and parts["ssim3d"] == 0.0 and parts["laplacian"] == 0.0
+    assert parts["ms_ssim3d"] != 0.0
+    assert float(loss) == pytest.approx(0.2 * parts["ms_ssim3d"], rel=1e-4)
+
+
 def test_laplacian_smoothness_zero_for_constant_field():
     res = 8
     const = torch.full((res ** 3,), 0.7)
@@ -145,7 +219,7 @@ def test_occupancy_3d_terms_respects_zero_weights():
         _FakeModel(), code_leaf, masks, c2ws, 16, cfg, "cpu"
     )
     assert float(loss) == 0.0
-    assert parts == {"occ": 0.0, "ssim3d": 0.0, "laplacian": 0.0}
+    assert parts == {"occ": 0.0, "ssim3d": 0.0, "ms_ssim3d": 0.0, "laplacian": 0.0}
 
 
 def test_soft_dice_gradient_direction():
